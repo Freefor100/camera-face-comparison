@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from camera_face_comparison.calibration import CalibrationRecord, calibrate_thresholds
+from camera_face_comparison.config import load_settings, write_recognition_thresholds
+
+
+def _values(start: int, stop: int) -> list[float]:
+    return [value / 100 for value in range(start, stop + 1)]
+
+
+def _load_records(path: Path) -> list[CalibrationRecord]:
+    records: list[CalibrationRecord] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+            expected = payload["expected_person_id"]
+            scores = {str(key): float(value) for key, value in payload["person_scores"].items()}
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError(f"invalid calibration record at line {line_number}") from error
+        if expected is not None:
+            expected = str(expected)
+        records.append(CalibrationRecord(expected_person_id=expected, person_scores=scores))
+    return records
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Calibrate the local match threshold and candidate-gap threshold."
+    )
+    parser.add_argument("--data-dir", type=Path, default=PROJECT_ROOT / "data")
+    parser.add_argument(
+        "--scores",
+        type=Path,
+        default=PROJECT_ROOT / "data" / "calibration_scores.jsonl",
+        help="JSONL rows: expected_person_id (string/null), person_scores (object)",
+    )
+    args = parser.parse_args()
+    if not args.scores.is_file():
+        print(f"Calibration input does not exist: {args.scores}", file=sys.stderr)
+        return 1
+    records = _load_records(args.scores)
+    result = calibrate_thresholds(
+        records=records,
+        threshold_candidates=_values(30, 80),
+        margin_candidates=_values(0, 20),
+    )
+    settings = load_settings(args.data_dir)
+    write_recognition_thresholds(
+        settings,
+        match_threshold=result.match_threshold,
+        min_margin=result.min_margin,
+    )
+    print(
+        json.dumps(
+            {
+                "match_threshold": result.match_threshold,
+                "min_margin": result.min_margin,
+                "unknown_false_accepts": result.unknown_false_accepts,
+                "known_correct": result.known_correct,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
