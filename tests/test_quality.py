@@ -18,6 +18,7 @@ from camera_face_comparison.image_input import assess_quality
 
 
 def _face(*, score: float = 0.95, size: int = 160, blur: float = 140.0) -> FaceObservation:
+    """构造可调检测分数、尺寸和清晰度的人脸观察对象。"""
     return FaceObservation(
         bbox=(0.0, 0.0, float(size), float(size)),
         detection_score=score,
@@ -28,7 +29,7 @@ def _face(*, score: float = 0.95, size: int = 160, blur: float = 140.0) -> FaceO
 
 
 def test_validate_single_face_rejects_multiple_people(tmp_path) -> None:
-    """A group photo must never be accidentally enrolled under one identity."""
+    """合照不能被错误地作为一个身份录入。"""
 
     settings = load_settings(tmp_path)
 
@@ -37,7 +38,7 @@ def test_validate_single_face_rejects_multiple_people(tmp_path) -> None:
 
 
 def test_validate_single_face_ignores_a_low_confidence_extra_detection(tmp_path) -> None:
-    """A sub-threshold false detection must not turn a valid single face into a group photo."""
+    """低于门槛的误检不能把有效单人脸变成合照错误。"""
 
     settings = load_settings(tmp_path)
 
@@ -47,7 +48,7 @@ def test_validate_single_face_ignores_a_low_confidence_extra_detection(tmp_path)
 
 
 def test_validate_single_face_rejects_blurry_face(tmp_path) -> None:
-    """A low-quality sample must not enter the standard library."""
+    """低质量样本不能进入标准人脸库。"""
 
     settings = load_settings(tmp_path)
 
@@ -56,7 +57,7 @@ def test_validate_single_face_rejects_blurry_face(tmp_path) -> None:
 
 
 def test_validate_single_face_returns_valid_face(tmp_path) -> None:
-    """A valid sample is normalized before it is persisted or compared."""
+    """有效样本在持久化或比对前必须完成特征归一化。"""
 
     settings = load_settings(tmp_path)
     valid_face = _face()
@@ -68,7 +69,7 @@ def test_validate_single_face_returns_valid_face(tmp_path) -> None:
 
 
 def test_face_engine_adapts_model_output_without_importing_vendor_types(tmp_path) -> None:
-    """Changing the InsightFace object wrapper must not leak into application logic."""
+    """更换 InsightFace 对象包装方式不能把厂商类型泄漏到应用逻辑。"""
 
     settings = load_settings(tmp_path)
     vendor_face = SimpleNamespace(
@@ -81,6 +82,7 @@ def test_face_engine_adapts_model_output_without_importing_vendor_types(tmp_path
     blur_inputs: list[tuple[int, int, int]] = []
 
     def blur_metric(face_crop: np.ndarray) -> float:
+        """记录清晰度输入裁剪尺寸并返回合格清晰度。"""
         blur_inputs.append(face_crop.shape)
         return 150.0
 
@@ -95,7 +97,7 @@ def test_face_engine_adapts_model_output_without_importing_vendor_types(tmp_path
 
 
 def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeypatch) -> None:
-    """Offline startup must set dependency guards before InsightFace is imported."""
+    """离线启动必须在导入 InsightFace 前设置依赖更新防护变量。"""
 
     settings = load_settings(tmp_path)
     (settings.models_dir / "buffalo_l").mkdir()
@@ -104,10 +106,14 @@ def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeyp
     monkeypatch.delenv("MPLCONFIGDIR", raising=False)
 
     class FakeAnalysis:
+        """模拟 InsightFace 分析器构造和 prepare 调用。"""
+
         def __init__(self, **kwargs) -> None:
+            """保存模型构造参数。"""
             self.kwargs = kwargs
 
         def prepare(self, **kwargs) -> None:
+            """保存模型准备参数。"""
             self.prepare_kwargs = kwargs
 
     app_module = ModuleType("insightface.app")
@@ -125,7 +131,7 @@ def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeyp
 
 
 def test_quality_profile_rejects_an_underexposed_face(tmp_path) -> None:
-    """A sharp but almost-black crop is not reliable enough for an identity decision."""
+    """清晰但几乎全黑的人脸裁剪仍不适合身份判定。"""
 
     settings = load_settings(tmp_path)
     frame = np.full((240, 320, 3), 5, dtype=np.uint8)

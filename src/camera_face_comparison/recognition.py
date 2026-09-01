@@ -17,7 +17,7 @@ from .repository import FaceRepository
 
 @dataclass(frozen=True)
 class MatchDecision:
-    """A recognition decision made from a set of person-level scores."""
+    """根据人级别得分集合生成的一次识别判定。"""
 
     status: str
     person_id: str | None
@@ -27,11 +27,15 @@ class MatchDecision:
 
 
 class ProbeFaceEngine(Protocol):
-    def extract_single_face(self, frame: np.ndarray) -> FaceObservation: ...
+    """识别流程所需的最小探针人脸提取接口。"""
+
+    def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        """从一张 BGR 图片提取一张人脸观察对象。"""
+        ...
 
 
 class RecognitionService:
-    """Application service that joins a probe face with the persisted library."""
+    """将探针人脸与持久化标准库连接起来的应用服务。"""
 
     def __init__(
         self,
@@ -39,17 +43,34 @@ class RecognitionService:
         settings: Settings,
         face_engine: ProbeFaceEngine,
     ) -> None:
+        """保存仓库、配置和人脸引擎依赖。"""
         self._repository = repository
         self._settings = settings
         self._face_engine = face_engine
 
     def compare(self, frame: np.ndarray) -> RecognitionResult:
-        """Compare a live camera frame through the same flow as an imported image."""
+        """将实时摄像头帧送入与本地图片相同的识别流程。
+
+        参数：
+            frame：当前摄像头产生的 BGR 图像。
+        返回：
+            可展示的开放集识别结果。
+        前置条件：
+            标准库仓库和人脸引擎已经可用。
+        """
 
         return self.compare_input(ImageInput.from_camera(frame))
 
     def compare_input(self, image_input: ImageInput) -> RecognitionResult:
-        """Perform quality-aware open-set 1:N identification for one local image."""
+        """对一张本地图片执行带质量门控的开放集 1:N 身份识别。
+
+        参数：
+            image_input：来自摄像头、文件或评测数据集的独立图片输入。
+        返回：
+            Known、Unknown、Invalid 或标准库异常结果，并写入识别日志。
+        前置条件：
+            输入数组有效；标准库完整性检查通过后才会读取其特征参与比对。
+        """
 
         started_at = perf_counter()
         try:
@@ -127,6 +148,7 @@ class RecognitionService:
         return self._record_and_return(result)
 
     def _record_and_return(self, result: RecognitionResult) -> RecognitionResult:
+        """记录识别结果后原样返回，保证 UI 和日志使用同一结果。"""
         self._repository.record_recognition(
             decision=result.status,
             person_id=result.person_id,
@@ -143,7 +165,16 @@ def aggregate_person_scores(
     *,
     top_k: int = 2,
 ) -> dict[str, float]:
-    """Return each person's mean score across its strongest reference samples."""
+    """对每个人取最高若干张参考样本得分的均值。
+
+    参数：
+        person_scores：身份编号到其全部样本相似度的映射。
+        top_k：参与聚合的最高得分样本数。
+    返回：
+        身份编号到人级别聚合得分的映射。
+    前置条件：
+        `top_k` 必须为正数；空样本身份不会出现在结果中。
+    """
 
     if top_k < 1:
         raise ValueError("top_k must be at least one")
@@ -160,7 +191,16 @@ def aggregate_quality_weighted_scores(
     *,
     top_k: int,
 ) -> dict[str, float]:
-    """Aggregate Top-K cosine similarities while reducing low-quality reference influence."""
+    """聚合 Top-K 余弦相似度，并降低低质量参考图片的影响。
+
+    参数：
+        person_scores：身份编号到 `(相似度, 样本质量分数)` 序列的映射。
+        top_k：参与加权聚合的最高得分样本数。
+    返回：
+        身份编号到质量加权聚合得分的映射。
+    前置条件：
+        `top_k` 必须为正数，质量分数应位于 0 到 1。
+    """
 
     if top_k < 1:
         raise ValueError("top_k must be at least one")
@@ -181,7 +221,17 @@ def decide_match(
     match_threshold: float,
     min_margin: float,
 ) -> MatchDecision:
-    """Return a match only when the best person clears both safety checks."""
+    """只有最高候选同时通过得分和候选差距检查时才判定为匹配。
+
+    参数：
+        person_scores：已经聚合的人级别得分。
+        match_threshold：最高候选的最低接受分数。
+        min_margin：最高候选与第二候选的最小差距。
+    返回：
+        匹配或未知判定及其原因。
+    前置条件：
+        阈值由同一评测协议标定，并位于 0 到 1 范围内。
+    """
 
     ranked = sorted(person_scores.items(), key=lambda item: item[1], reverse=True)
     if not ranked:
@@ -217,7 +267,20 @@ def recognize_embedding(
     sample_quality_by_person: Mapping[str, Sequence[float]] | None = None,
     top_k: int = 2,
 ) -> MatchDecision:
-    """Compare one probe vector with every enrolled sample and decide safely."""
+    """将一条探针特征与标准库中所有身份的样本比较并生成安全判定。
+
+    参数：
+        query_embedding：待识别的人脸特征向量。
+        embeddings_by_person：每个身份的全部标准样本特征。
+        match_threshold：最高候选得分阈值。
+        min_margin：第一、第二候选的最小得分差距。
+        sample_quality_by_person：可选的每张标准样本质量分数。
+        top_k：每个身份参与聚合的最高得分样本数。
+    返回：
+        匹配或未知的 `MatchDecision`。
+    前置条件：
+        向量必须为非零一维数组；标准库中每个人的质量列表应与样本顺序对应。
+    """
 
     query = _normalize(query_embedding)
     raw_scores: dict[str, list[float]] = {}
@@ -244,6 +307,7 @@ def recognize_embedding(
 
 
 def _stored_quality_score(quality: Mapping[str, float | str]) -> float:
+    """读取并验证持久化质量 JSON 中的质量分数。"""
     raw_score = quality["quality_score"]
     if not isinstance(raw_score, (float, int)):
         raise TypeError("stored quality_score must be numeric")
@@ -254,14 +318,17 @@ def _stored_quality_score(quality: Mapping[str, float | str]) -> float:
 
 
 def _quality_at(scores: Sequence[float], index: int) -> float:
+    """按样本下标读取质量分数，缺失时使用中性默认值。"""
     return scores[index] if index < len(scores) else 0.6
 
 
 def _quality_weight(quality_score: float) -> float:
+    """把质量分数转换为不会降到零的聚合权重。"""
     return 0.5 + 0.5 * max(0.0, min(1.0, quality_score))
 
 
 def _normalize(embedding: np.ndarray) -> np.ndarray:
+    """把特征转换为 float32 单位向量，拒绝空向量和零向量。"""
     vector = np.asarray(embedding, dtype=np.float32)
     norm = float(np.linalg.norm(vector))
     if vector.ndim != 1 or vector.size == 0 or norm == 0.0:

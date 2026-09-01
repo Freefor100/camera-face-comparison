@@ -17,6 +17,7 @@ from camera_face_comparison.lfw_evaluation import evaluate_lfw_protocol
 
 
 def _load_protocol(path: Path) -> LfwProtocol:
+    """读取并校验本地 LFW 开放集评测协议。"""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("protocol") != "lfw-open-set-v1":
         raise ValueError("unsupported LFW protocol file")
@@ -37,6 +38,7 @@ def _load_protocol(path: Path) -> LfwProtocol:
 
 
 def _metrics_dict(metrics: ExperimentMetrics) -> dict[str, float | int | None]:
+    """将评测统计对象转换为 JSON 可序列化字典。"""
     return {
         "total": metrics.total,
         "known_total": metrics.known_total,
@@ -53,6 +55,7 @@ def _metrics_dict(metrics: ExperimentMetrics) -> dict[str, float | int | None]:
 
 
 def main() -> int:
+    """加载本地模型和 LFW 协议，执行并保存开放集评测。"""
     parser = argparse.ArgumentParser(
         description="Run the local InsightFace model against a fixed LFW open-set protocol."
     )

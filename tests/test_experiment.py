@@ -5,7 +5,7 @@ from camera_face_comparison.experiment import ExperimentRecord, evaluate_experim
 
 
 def test_optimized_experiment_reduces_misidentifications_on_the_same_records() -> None:
-    """The report must make the Top-2 and margin improvement measurable."""
+    """报告必须能够量化 Top-2 聚合和候选差距规则的改善。"""
 
     baseline, optimized = evaluate_experiments(
         records=[
@@ -31,7 +31,7 @@ def test_optimized_experiment_reduces_misidentifications_on_the_same_records() -
 
 
 def test_optimized_evaluation_applies_the_probe_quality_tier_policy(tmp_path) -> None:
-    """A medium-quality probe should be measured with its stricter acceptance threshold."""
+    """中等质量探针必须使用更严格的接收阈值进行评测。"""
 
     settings = load_settings(tmp_path)
     baseline, optimized = evaluate_experiments(

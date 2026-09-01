@@ -19,7 +19,7 @@ from camera_face_comparison.repository import FaceRepository, SampleInput
 
 
 def test_aggregate_person_scores_uses_mean_of_two_best_samples() -> None:
-    """A lower-quality third sample must not distort a person's final score."""
+    """较低质量的第三张样本不能扭曲人员最终得分。"""
 
     person_scores = {
         "alice": [0.95, 0.72, 0.11],
@@ -33,7 +33,7 @@ def test_aggregate_person_scores_uses_mean_of_two_best_samples() -> None:
 
 
 def test_quality_weighted_aggregation_downweights_a_poor_reference_image() -> None:
-    """A very similar but low-quality reference must not dominate a reliable person."""
+    """相似度很高但质量较差的参考图不能压过可靠样本。"""
 
     aggregated = aggregate_quality_weighted_scores(
         {
@@ -49,7 +49,7 @@ def test_quality_weighted_aggregation_downweights_a_poor_reference_image() -> No
 
 
 def test_decide_match_returns_best_person_when_score_and_gap_pass() -> None:
-    """Removing either acceptance check must prevent a false positive."""
+    """最高得分和候选差距都通过时才允许返回最佳人员。"""
 
     decision = decide_match(
         {"alice": 0.84, "bob": 0.70},
@@ -64,7 +64,7 @@ def test_decide_match_returns_best_person_when_score_and_gap_pass() -> None:
 
 
 def test_decide_match_returns_unknown_when_best_person_is_too_close() -> None:
-    """A high score alone must not identify a person when candidates are ambiguous."""
+    """候选身份接近且存在歧义时，单独的高分不能直接识别人员。"""
 
     decision = decide_match(
         {"alice": 0.91, "bob": 0.87},
@@ -78,7 +78,7 @@ def test_decide_match_returns_unknown_when_best_person_is_too_close() -> None:
 
 
 def test_recognize_embedding_uses_all_samples_before_selecting_person() -> None:
-    """One excellent but unrepresentative sample must not beat a consistent identity."""
+    """一张异常优秀但缺乏代表性的样本不能压过整体稳定的身份。"""
 
     decision = recognize_embedding(
         query_embedding=np.array([1.0, 0.0], dtype=np.float32),
@@ -101,7 +101,7 @@ def test_recognize_embedding_uses_all_samples_before_selecting_person() -> None:
 
 
 def test_recognition_service_returns_name_for_best_library_identity(tmp_path) -> None:
-    """The UI service must translate a matched person ID into the display name."""
+    """识别服务必须把匹配的人员编号转换为界面显示名称。"""
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
@@ -119,7 +119,10 @@ def test_recognition_service_returns_name_for_best_library_identity(tmp_path) ->
     )
 
     class ProbeEngine:
+        """返回 Alice 特征的识别测试引擎。"""
+
         def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+            """为测试输入返回高质量的 Alice 特征。"""
             return FaceObservation(
                 bbox=(0.0, 0.0, 160.0, 160.0),
                 detection_score=0.95,
@@ -140,7 +143,7 @@ def test_recognition_service_returns_name_for_best_library_identity(tmp_path) ->
 
 
 def test_recognition_uses_stricter_policy_for_medium_quality_probe(tmp_path) -> None:
-    """The same similarity is accepted for a high-quality probe but rejected for medium quality."""
+    """相同相似度在高质量探针上可接受，在中等质量探针上应被拒绝。"""
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
@@ -152,7 +155,10 @@ def test_recognition_uses_stricter_policy_for_medium_quality_probe(tmp_path) -> 
     )
 
     class ProbeEngine:
+        """返回固定中等质量探针特征的识别测试引擎。"""
+
         def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+            """为测试输入返回用于比较质量策略的特征。"""
             return FaceObservation(
                 bbox=(0.0, 0.0, 180.0, 180.0),
                 detection_score=0.95,
@@ -180,6 +186,7 @@ def _create_person(
     name: str,
     embeddings: list[np.ndarray],
 ):
+    """为识别服务测试创建一个带指定特征的人员和图片文件。"""
     person_id = name.lower()
     samples = []
     for index, embedding in enumerate(embeddings, start=1):
@@ -205,6 +212,7 @@ def _create_person(
 
 
 def _textured_frame(base_value: int) -> np.ndarray:
+    """创建满足质量门控并带有简单纹理的测试 BGR 图像。"""
     frame = np.full((240, 320, 3), base_value, dtype=np.uint8)
     frame[:, ::2] = base_value + 30
     return frame

@@ -17,7 +17,7 @@ from .domain import FaceSample, Person
 
 @dataclass(frozen=True)
 class SampleInput:
-    """A sample prepared by the enrollment workflow for one SQLite transaction."""
+    """录入流程为一次 SQLite 事务准备的一条样本数据。"""
 
     image_path: str
     embedding: np.ndarray
@@ -28,9 +28,16 @@ class SampleInput:
 
 
 class FaceRepository:
-    """SQLite-backed storage for people, face embeddings, and recognition logs."""
+    """保存人员、特征向量和识别日志的 SQLite 仓库。"""
 
     def __init__(self, database_path: Path) -> None:
+        """打开数据库并初始化当前版本的表结构。
+
+        参数：
+            database_path：SQLite 数据库文件路径。
+        前置条件：
+            父目录已存在或由 SQLite 创建；本项目不迁移旧数据库结构。
+        """
         self._connection = sqlite3.connect(database_path, timeout=5.0)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
@@ -39,6 +46,7 @@ class FaceRepository:
         self._initialize_schema()
 
     def close(self) -> None:
+        """关闭数据库连接，释放文件句柄。"""
         self._connection.close()
 
     def create_person_with_samples(
@@ -48,7 +56,17 @@ class FaceRepository:
         display_name: str,
         samples: Sequence[SampleInput],
     ) -> Person:
-        """Persist a new identity and all of its samples atomically."""
+        """在一个事务中原子保存新身份及其全部样本。
+
+        参数：
+            person_id：新身份的唯一编号。
+            display_name：新身份的显示名称。
+            samples：至少一条已经准备好的样本。
+        返回：
+            已持久化的人员对象。
+        前置条件：
+            样本特征为非空一维向量；图片路径和哈希已由录入服务准备好。
+        """
 
         normalized_name = display_name.strip()
         if not normalized_name:
@@ -88,7 +106,16 @@ class FaceRepository:
         person_id: str,
         samples: Sequence[SampleInput],
     ) -> list[FaceSample]:
-        """Append prepared samples to an existing identity in one transaction."""
+        """在一个事务中向已有身份追加准备好的样本。
+
+        参数：
+            person_id：已存在身份的编号。
+            samples：至少一条待写入样本。
+        返回：
+            实际生成并写入的样本对象列表。
+        前置条件：
+            调用方应确保身份存在，所有文件已移动到最终位置。
+        """
 
         if not samples:
             raise ValueError("at least one sample is required")
@@ -110,14 +137,14 @@ class FaceRepository:
         return prepared_samples
 
     def sqlite_integrity_messages(self) -> tuple[str, ...]:
-        """Return SQLite's consistency report without changing stored data."""
+        """返回 SQLite 完整性检查结果，不修改数据库内容。"""
 
         return tuple(
             str(row[0]) for row in self._connection.execute("PRAGMA integrity_check").fetchall()
         )
 
     def foreign_key_violations(self) -> tuple[str, ...]:
-        """Return any dangling references detected by SQLite."""
+        """返回 SQLite 检测到的全部外键悬挂引用。"""
 
         return tuple(
             ":".join(str(value) for value in row)
@@ -125,12 +152,14 @@ class FaceRepository:
         )
 
     def list_people(self) -> list[Person]:
+        """按创建时间和名称返回当前全部人员。"""
         rows = self._connection.execute(
             "SELECT id, display_name, created_at FROM persons ORDER BY created_at, display_name"
         ).fetchall()
         return [self._person_from_row(row) for row in rows]
 
     def get_person(self, person_id: str) -> Person | None:
+        """按身份编号查找人员，找不到时返回 `None`。"""
         row = self._connection.execute(
             "SELECT id, display_name, created_at FROM persons WHERE id = ?", (person_id,)
         ).fetchone()
@@ -139,6 +168,13 @@ class FaceRepository:
         return self._person_from_row(row)
 
     def list_samples(self, person_id: str | None = None) -> list[FaceSample]:
+        """返回全部样本，或返回指定身份的样本。
+
+        参数：
+            person_id：可选的身份编号过滤条件。
+        返回：
+            按创建时间排序的样本对象列表。
+        """
         query = """
             SELECT id, person_id, image_path, embedding_blob, embedding_dim,
                    pose, quality_json, created_at, source_type, image_sha256,
@@ -163,6 +199,7 @@ class FaceRepository:
         latency_ms: float,
         reason: str | None,
     ) -> None:
+        """把一次识别判定和耗时写入识别日志表。"""
         with self._write_transaction():
             self._connection.execute(
                 """
@@ -184,6 +221,7 @@ class FaceRepository:
             )
 
     def _initialize_schema(self) -> None:
+        """创建当前版本的人员、样本和识别日志表。"""
         with self._connection:
             self._connection.executescript(
                 """
@@ -229,6 +267,7 @@ class FaceRepository:
         source_type: str,
         image_sha256: str | None,
     ) -> FaceSample:
+        """校验向量并构造带哈希的样本领域对象。"""
         vector = np.asarray(embedding, dtype=np.float32)
         if vector.ndim != 1 or vector.size == 0:
             raise ValueError("embedding must be a non-empty one-dimensional vector")
@@ -246,6 +285,7 @@ class FaceRepository:
         )
 
     def _insert_sample(self, sample: FaceSample) -> None:
+        """将一个样本对象写入已存在的 SQLite 事务。"""
         self._connection.execute(
             """
             INSERT INTO face_samples (
@@ -271,6 +311,7 @@ class FaceRepository:
 
     @staticmethod
     def _sample_from_row(row: sqlite3.Row) -> FaceSample:
+        """把 SQLite 行恢复为样本对象并校验特征维度。"""
         embedding = np.frombuffer(row["embedding_blob"], dtype=np.float32).copy()
         if embedding.size != row["embedding_dim"]:
             raise ValueError(f"stored embedding {row['id']} has an invalid dimension")
@@ -289,6 +330,7 @@ class FaceRepository:
 
     @staticmethod
     def _person_from_row(row: sqlite3.Row) -> Person:
+        """把 SQLite 行恢复为人员对象。"""
         return Person(
             id=row["id"],
             display_name=row["display_name"],
@@ -297,6 +339,7 @@ class FaceRepository:
 
     @contextmanager
     def _write_transaction(self) -> Generator[None, None, None]:
+        """以 `BEGIN IMMEDIATE` 提供单写事务，并在异常时回滚。"""
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             yield
@@ -308,4 +351,5 @@ class FaceRepository:
 
 
 def _now() -> datetime:
+    """返回当前 UTC 时间，供数据库记录使用。"""
     return datetime.now(UTC)

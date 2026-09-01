@@ -12,7 +12,7 @@ from .repository import FaceRepository
 
 @dataclass(frozen=True)
 class IntegrityFailure:
-    """One local-library item that should not be trusted for recognition."""
+    """一个不应继续用于识别的本地标准库异常项。"""
 
     kind: str
     detail: str
@@ -21,17 +21,27 @@ class IntegrityFailure:
 
 @dataclass(frozen=True)
 class LibraryVerificationReport:
-    """Read-only verification outcome for the current SQLite library and face files."""
+    """当前 SQLite 数据库和人脸文件的只读完整性检查结果。"""
 
     failures: tuple[IntegrityFailure, ...]
 
     @property
     def is_valid(self) -> bool:
+        """返回是否不存在完整性失败项。"""
         return not self.failures
 
 
 def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVerificationReport:
-    """Check SQLite structure and the hashes the application records at write time."""
+    """检查 SQLite 结构以及录入时记录的图片、特征哈希。
+
+    参数：
+        repository：要检查的本地人脸库仓库。
+        settings：用于解析相对图片路径的数据目录配置。
+    返回：
+        所有发现的异常；没有异常时报告为有效。
+    前置条件：
+        仓库连接已打开，样本图片路径应位于配置的数据目录内。
+    """
 
     failures: list[IntegrityFailure] = []
     for message in repository.sqlite_integrity_messages():
@@ -66,6 +76,7 @@ def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVer
 
 
 def _is_within(path: Path, root: Path) -> bool:
+    """判断解析后的路径是否仍位于指定根目录内。"""
     try:
         path.relative_to(root)
     except ValueError:
@@ -74,6 +85,7 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def _sha256_file(path: Path) -> str:
+    """分块计算本地文件的 SHA-256 哈希。"""
     digest = hashlib.sha256()
     with path.open("rb") as image_file:
         for chunk in iter(lambda: image_file.read(65536), b""):

@@ -31,7 +31,7 @@ medium_quality_score = 0.55
 
 @dataclass(frozen=True)
 class QualityTierPolicy:
-    """Open-set acceptance policy for one validated probe-quality tier."""
+    """一个已通过质量检查的探针质量层级的开放集接收策略。"""
 
     match_threshold: float
     min_margin: float
@@ -39,7 +39,7 @@ class QualityTierPolicy:
 
 @dataclass(frozen=True)
 class Settings:
-    """Filesystem locations and calibrated recognition settings."""
+    """运行目录、质量规则和已标定识别参数。"""
 
     data_dir: Path
     config_path: Path
@@ -62,7 +62,15 @@ class Settings:
 
 
 def load_settings(data_dir: Path) -> Settings:
-    """Create the portable runtime layout and load its TOML configuration."""
+    """创建可迁移运行目录并读取当前 TOML 配置。
+
+    参数：
+        data_dir：保存数据库、图片、模型和日志的目录。
+    返回：
+        供应用各模块共享的不可变配置对象。
+    前置条件：
+        配置文件不存在时会生成当前版本的完整默认配置；已有配置必须包含当前字段。
+    """
 
     resolved_data_dir = data_dir.expanduser().resolve()
     faces_dir = resolved_data_dir / "faces"
@@ -112,7 +120,15 @@ def write_recognition_thresholds(
     match_threshold: float,
     min_margin: float,
 ) -> None:
-    """Persist a calibration result while retaining the active quality policy."""
+    """保存整体识别阈值，同时保留当前两个质量层级的策略。
+
+    参数：
+        settings：当前运行配置。
+        match_threshold：最高候选得分阈值。
+        min_margin：第一、第二候选的最小分差。
+    前置条件：
+        两个阈值都必须位于 `[0, 1]`。
+    """
 
     _validate_thresholds(match_threshold, min_margin)
     _write_settings_file(
@@ -130,7 +146,16 @@ def write_quality_tier_thresholds(
     match_threshold: float,
     min_margin: float,
 ) -> None:
-    """Persist calibration for one probe-quality tier without weakening the other tier."""
+    """保存一个探针质量层级的标定结果，不改变另一个层级的策略。
+
+    参数：
+        settings：当前运行配置。
+        tier：要更新的质量层级，目前为 `high` 或 `medium`。
+        match_threshold：该层级的最高候选得分阈值。
+        min_margin：该层级的最小候选分差。
+    前置条件：
+        层级必须存在，且两个阈值都必须位于 `[0, 1]`。
+    """
 
     if tier not in settings.quality_tiers:
         raise ValueError(f"unknown quality tier: {tier}")
@@ -154,6 +179,7 @@ def _write_settings_file(
     min_margin: float,
     quality_tiers: dict[str, QualityTierPolicy],
 ) -> None:
+    """按当前完整字段重写配置文件，不保留旧配置字段。"""
     high_tier = quality_tiers["high"]
     medium_tier = quality_tiers["medium"]
     settings.config_path.write_text(
@@ -189,6 +215,7 @@ def _write_settings_file(
 
 
 def _validate_thresholds(match_threshold: float, min_margin: float) -> None:
+    """检查识别阈值是否位于合法的闭区间 `[0, 1]`。"""
     if not 0.0 <= match_threshold <= 1.0:
         raise ValueError("match_threshold must be between 0 and 1")
     if not 0.0 <= min_margin <= 1.0:
@@ -196,6 +223,7 @@ def _validate_thresholds(match_threshold: float, min_margin: float) -> None:
 
 
 def _read_tier(raw_tier: dict[str, object]) -> QualityTierPolicy:
+    """把 TOML 中的一个质量层级配置转换为类型化策略对象。"""
     return QualityTierPolicy(
         match_threshold=float(raw_tier["match_threshold"]),
         min_margin=float(raw_tier["min_margin"]),

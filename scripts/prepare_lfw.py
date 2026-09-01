@@ -17,6 +17,7 @@ from camera_face_comparison.lfw_dataset import (
 
 
 def main() -> int:
+    """准备本地 LFW 数据集并写出确定性的开放集协议。"""
     parser = argparse.ArgumentParser(
         description="Prepare a reproducible LFW open-set face-recognition evaluation split."
     )

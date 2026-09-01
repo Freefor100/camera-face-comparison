@@ -4,7 +4,7 @@ from camera_face_comparison.calibration import CalibrationRecord, calibrate_thre
 
 
 def test_calibration_prioritizes_rejecting_unknown_people() -> None:
-    """A setting that matches more known probes is wrong if it accepts an unknown person."""
+    """如果接受了未知人员，即使已知正确数更多也不能视为更优阈值。"""
 
     result = calibrate_thresholds(
         records=[

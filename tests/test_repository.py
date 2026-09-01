@@ -12,6 +12,7 @@ def _sample_input(
     *,
     image_path: str = "faces/alice/imported.jpg",
 ) -> SampleInput:
+    """构造仓库测试使用的样本输入对象。"""
     return SampleInput(
         image_path=image_path,
         embedding=embedding,
@@ -23,7 +24,7 @@ def _sample_input(
 
 
 def test_person_schema_contains_only_current_identity_fields(tmp_path) -> None:
-    """The unreleased project stores only identities that already have samples."""
+    """当前未发布项目的身份表只保存当前版本的身份字段。"""
 
     repository = FaceRepository(tmp_path / "face_library.sqlite")
     columns = [
@@ -36,7 +37,7 @@ def test_person_schema_contains_only_current_identity_fields(tmp_path) -> None:
 
 
 def test_repository_persists_person_and_embedding_across_reopen(tmp_path) -> None:
-    """A dynamic library addition must remain usable after the application restarts."""
+    """动态新增的标准库内容在应用重启后仍必须可以使用。"""
 
     database_path = tmp_path / "face_library.sqlite"
     first_repository = FaceRepository(database_path)
@@ -65,7 +66,7 @@ def test_repository_persists_person_and_embedding_across_reopen(tmp_path) -> Non
 
 
 def test_repository_persists_sample_provenance_hashes_and_wal_mode(tmp_path) -> None:
-    """Stored template provenance and consistency metadata survive a normal reopen."""
+    """样本来源哈希和完整性元数据在正常重启后必须保留。"""
 
     database_path = tmp_path / "face_library.sqlite"
     repository = FaceRepository(database_path)

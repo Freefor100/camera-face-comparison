@@ -14,7 +14,10 @@ from camera_face_comparison.repository import FaceRepository
 
 
 class FakeFaceEngine:
+    """返回固定合格人脸观察结果的测试引擎。"""
+
     def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        """为任意测试帧返回固定特征和质量指标。"""
         return FaceObservation(
             bbox=(0.0, 0.0, 180.0, 180.0),
             detection_score=0.95,
@@ -25,7 +28,10 @@ class FakeFaceEngine:
 
 
 class DiverseFakeFaceEngine:
+    """根据像素标记生成不同特征的测试引擎。"""
+
     def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        """从测试帧左上角标记构造可区分的特征向量。"""
         marker = float(frame[0, 0, 0])
         return FaceObservation(
             bbox=(0.0, 0.0, 180.0, 180.0),
@@ -37,18 +43,20 @@ class DiverseFakeFaceEngine:
 
 
 def _save_image(path: Path, frame: np.ndarray) -> None:
+    """写入测试图片占位内容，并确保父目录存在。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"test image")
 
 
 def test_enrollment_rolls_back_when_an_image_cannot_be_saved(tmp_path) -> None:
-    """A failed multi-image import must not leave an identity or face files behind."""
+    """多图片导入失败时不能留下人员记录或人脸文件。"""
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
     saved_count = 0
 
     def failing_saver(path: Path, frame: np.ndarray) -> None:
+        """第二次保存时模拟磁盘写入失败。"""
         nonlocal saved_count
         saved_count += 1
         if saved_count == 2:
@@ -77,7 +85,7 @@ def test_enrollment_rolls_back_when_an_image_cannot_be_saved(tmp_path) -> None:
 
 
 def test_one_valid_camera_input_creates_a_person(tmp_path) -> None:
-    """The first accepted camera image creates an identity that can be recognized."""
+    """第一张合格摄像头图片即可创建能够参与识别的身份。"""
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
@@ -102,6 +110,7 @@ def test_one_valid_camera_input_creates_a_person(tmp_path) -> None:
 
 
 def test_one_valid_local_image_creates_a_person(tmp_path) -> None:
+    """一张合格本地图片也可以直接创建可识别人员。"""
     settings = load_settings(tmp_path / "data")
     repository = FaceRepository(settings.database_path)
     service = EnrollmentService(
@@ -124,6 +133,7 @@ def test_one_valid_local_image_creates_a_person(tmp_path) -> None:
 
 
 def test_multiple_samples_can_be_appended_after_creation(tmp_path) -> None:
+    """人员创建后可以继续追加多张样本。"""
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
     service = EnrollmentService(
@@ -152,6 +162,7 @@ def test_multiple_samples_can_be_appended_after_creation(tmp_path) -> None:
 
 
 def _textured_frame(value: int) -> np.ndarray:
+    """创建带有简单条纹纹理的测试 BGR 图像。"""
     frame = np.full((240, 320, 3), value, dtype=np.uint8)
     frame[:, ::2] = value + 30
     return frame

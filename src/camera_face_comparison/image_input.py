@@ -17,7 +17,7 @@ SourceType = Literal["camera", "file", "dataset"]
 
 @dataclass(frozen=True)
 class ImageInput:
-    """One BGR image entering enrollment, recognition, or evaluation."""
+    """进入录入、识别或评测流程的一张 BGR 图像。"""
 
     frame: np.ndarray
     source_type: SourceType
@@ -25,10 +25,29 @@ class ImageInput:
 
     @classmethod
     def from_camera(cls, frame: np.ndarray) -> ImageInput:
+        """复制摄像头当前帧，避免后台任务读取可变缓冲区。
+
+        参数：
+            frame：摄像头产生的 BGR 图像。
+        返回：
+            来源标记为摄像头的独立图片输入。
+        前置条件：
+            输入应为非空的三通道 NumPy 图像数组。
+        """
         return cls(frame=_validated_copy(frame), source_type="camera", safe_name=None)
 
     @classmethod
     def from_file(cls, path: Path, *, source_type: SourceType = "file") -> ImageInput:
+        """读取本地图片并转换为 OpenCV 使用的 BGR 数组。
+
+        参数：
+            path：待读取的图片路径。
+            source_type：记录图片来源的标签。
+        返回：
+            不保留原始绝对路径的图片输入对象。
+        前置条件：
+            文件存在且能被 OpenCV 解码。
+        """
         try:
             import cv2
         except ImportError as error:
@@ -41,7 +60,7 @@ class ImageInput:
 
 @dataclass(frozen=True)
 class QualityProfile:
-    """Interpretable face-image quality data used before an identity decision."""
+    """在人脸身份判定前使用的、可解释的图片质量数据。"""
 
     tier: Literal["high", "medium", "reject"]
     score: float
@@ -54,7 +73,17 @@ def assess_quality(
     observation: FaceObservation,
     settings: Settings,
 ) -> QualityProfile:
-    """Classify a detected face using reproducible, configuration-backed measurements."""
+    """根据配置中的可复现指标评估检测到的人脸质量。
+
+    参数：
+        frame：原始 BGR 图像。
+        observation：已经通过单人脸门控的人脸观察对象。
+        settings：亮度、对比度和质量分层阈值。
+    返回：
+        包含质量分数、层级和拒绝原因的质量报告。
+    前置条件：
+        `observation.bbox` 必须对应当前图像中的有效区域。
+    """
 
     crop = _crop_to_bbox(frame, observation.bbox)
     brightness = float(crop.mean())
@@ -84,6 +113,7 @@ def assess_quality(
 
 
 def _validated_copy(frame: np.ndarray) -> np.ndarray:
+    """验证并复制输入图像，确保后台处理拥有独立的连续数组。"""
     if frame.ndim != 3 or frame.shape[2] != 3:
         raise ValueError("image must be a three-channel BGR frame")
     if frame.size == 0:
@@ -95,6 +125,7 @@ def _crop_to_bbox(
     frame: np.ndarray,
     bbox: tuple[float, float, float, float],
 ) -> np.ndarray:
+    """按检测框裁剪图像，并将坐标限制在图像边界内。"""
     height, width = frame.shape[:2]
     left = max(0, int(np.floor(bbox[0])))
     top = max(0, int(np.floor(bbox[1])))
@@ -106,6 +137,7 @@ def _crop_to_bbox(
 
 
 def _hard_failure_reasons(metrics: dict[str, float], settings: Settings) -> list[str]:
+    """返回会直接导致图片拒绝的质量指标原因。"""
     reasons: list[str] = []
     if metrics["detection_score"] < settings.min_detection_score:
         reasons.append("detection_score_below_minimum")
@@ -123,6 +155,7 @@ def _hard_failure_reasons(metrics: dict[str, float], settings: Settings) -> list
 
 
 def _quality_score(metrics: dict[str, float], settings: Settings) -> float:
+    """将清晰度、亮度和对比度指标合成为 0 到 1 的质量分数。"""
     detection = _clamp(
         (metrics["detection_score"] - settings.min_detection_score)
         / (1.0 - settings.min_detection_score)
@@ -135,4 +168,5 @@ def _quality_score(metrics: dict[str, float], settings: Settings) -> float:
 
 
 def _clamp(value: float) -> float:
+    """把数值限制在闭区间 `[0, 1]`。"""
     return max(0.0, min(1.0, value))

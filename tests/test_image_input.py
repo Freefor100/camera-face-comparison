@@ -6,7 +6,7 @@ from camera_face_comparison.image_input import ImageInput
 
 
 def test_file_input_decodes_bgr_and_exposes_only_safe_name(tmp_path) -> None:
-    """A local photo query must be usable without retaining its original path."""
+    """本地图片识别输入必须可用，同时不能保留原始绝对路径。"""
 
     import cv2
 
@@ -24,7 +24,7 @@ def test_file_input_decodes_bgr_and_exposes_only_safe_name(tmp_path) -> None:
 
 
 def test_camera_input_copies_frame_before_background_processing() -> None:
-    """The worker must not observe a mutable camera buffer after capture."""
+    """后台任务不能在抓拍后继续观察可变的摄像头缓冲区。"""
 
     frame = np.zeros((16, 16, 3), dtype=np.uint8)
     image = ImageInput.from_camera(frame)

@@ -10,7 +10,10 @@ from camera_face_comparison.lfw_evaluation import evaluate_lfw_protocol
 
 
 class MarkerFaceEngine:
+    """根据测试图片像素标记返回预设特征的评测引擎。"""
+
     def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        """把图片左上角的标记映射到预设的人脸特征。"""
         marker = int(frame[0, 0, 0])
         if marker <= 140:
             embedding = np.array([1.0, 0.0], dtype=np.float32)
@@ -28,7 +31,7 @@ class MarkerFaceEngine:
 
 
 def test_lfw_evaluation_extracts_templates_and_keeps_unknown_probe_labels(tmp_path) -> None:
-    """The real-image evaluator must build its gallery separately from unknown probes."""
+    """真实图片评测必须独立构建标准库，并保留未知探针标签。"""
 
     dataset_dir = tmp_path / "lfw_funneled"
     enrollment = {
@@ -64,6 +67,7 @@ def _write_images(
     *,
     start: int = 1,
 ) -> list[str]:
+    """生成带身份和顺序文件名的测试 PNG 图片并返回相对路径。"""
     person_dir = dataset_dir / name
     person_dir.mkdir(parents=True, exist_ok=True)
     paths: list[str] = []

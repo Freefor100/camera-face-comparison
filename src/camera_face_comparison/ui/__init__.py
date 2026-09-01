@@ -1,1 +1,1 @@
-"""PySide6 widgets for the camera face-comparison application."""
+"""摄像头人脸比对应用使用的 PySide6 界面组件。"""

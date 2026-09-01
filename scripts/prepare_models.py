@@ -11,6 +11,7 @@ from camera_face_comparison.config import load_settings
 
 
 def main() -> int:
+    """在联网环境准备 buffalo_l 模型，供应用离线启动使用。"""
     parser = argparse.ArgumentParser(
         description="Download the InsightFace buffalo_l model for later offline use."
     )

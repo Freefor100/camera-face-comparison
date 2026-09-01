@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_calibration_script_updates_only_the_requested_quality_tier(tmp_path) -> None:
-    """Calibration records for medium probes must update the medium acceptance policy."""
+    """中等质量探针的标定记录只能更新中等质量接收策略。"""
 
     scores_path = tmp_path / "scores.jsonl"
     scores_path.write_text(

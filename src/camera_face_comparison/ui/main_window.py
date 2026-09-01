@@ -34,34 +34,46 @@ from ..repository import FaceRepository
 
 
 class CameraWorker(QThread):
+    """在后台线程中持续读取摄像头并发送画面与状态信号。"""
+
     frame_ready = Signal(object)
     worker_error = Signal(str)
     worker_status = Signal(str)
 
     def __init__(self, camera: CameraService, index: int) -> None:
+        """创建摄像头读取线程。
+
+        参数：
+            camera：摄像头服务实例。
+            index：待打开的设备索引。
+        """
         super().__init__()
         self._camera = camera
         self._index = index
         self._running = True
 
     def run(self) -> None:
+        """打开设备、循环发送帧，并在线程结束时释放设备。"""
         try:
             self._camera.open(self._index)
             self.worker_status.emit(f"已打开摄像头 {self._index}")
             while self._running:
                 self.frame_ready.emit(self._camera.read_frame())
                 self.msleep(15)
-        except Exception as error:  # noqa: BLE001 - worker errors must be shown to the user
+        except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
             self.worker_error.emit(str(error))
         finally:
             self._camera.close()
             self.worker_status.emit("摄像头已停止")
 
     def stop(self) -> None:
+        """请求读取循环停止；真正释放设备由 `run()` 的 finally 完成。"""
         self._running = False
 
 
 class RecognitionWorker(QThread):
+    """在后台线程中执行一次人脸检测、完整性检查和 1:N 比对。"""
+
     result_ready = Signal(object)
     worker_error = Signal(str)
 
@@ -73,6 +85,14 @@ class RecognitionWorker(QThread):
         face_engine: FaceEngine,
         image_input: ImageInput,
     ) -> None:
+        """创建一次识别任务。
+
+        参数：
+            database_path：标准库 SQLite 文件路径。
+            settings：当前运行配置。
+            face_engine：人脸检测和特征提取引擎。
+            image_input：待识别的独立图片输入。
+        """
         super().__init__()
         self._database_path = database_path
         self._settings = settings
@@ -80,6 +100,7 @@ class RecognitionWorker(QThread):
         self._image_input = image_input
 
     def run(self) -> None:
+        """在线程中打开独立仓库执行识别，并保证结束时关闭连接。"""
         repository: FaceRepository | None = None
         try:
             repository = FaceRepository(self._database_path)
@@ -87,7 +108,7 @@ class RecognitionWorker(QThread):
                 self._image_input
             )
             self.result_ready.emit(result)
-        except Exception as error:  # noqa: BLE001 - worker errors must be shown to the user
+        except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
             self.worker_error.emit(str(error))
         finally:
             if repository is not None:
@@ -95,7 +116,7 @@ class RecognitionWorker(QThread):
 
 
 class MainWindow(QMainWindow):
-    """The desktop application shell for preview, recognition, and library enrollment."""
+    """负责摄像头预览、识别和标准库录入的桌面应用主窗口。"""
 
     def __init__(
         self,
@@ -104,6 +125,15 @@ class MainWindow(QMainWindow):
         face_engine: FaceEngine,
         camera: CameraService,
     ) -> None:
+        """组装窗口、服务依赖、识别页和标准库页。
+
+        参数：
+            settings：运行目录和算法配置。
+            face_engine：本地人脸模型适配器。
+            camera：跨平台摄像头服务。
+        前置条件：
+            本地模型已经加载成功，数据库路径可写。
+        """
         super().__init__()
         self.setWindowTitle("摄像头人脸比对系统")
         self.resize(1180, 760)
@@ -126,6 +156,7 @@ class MainWindow(QMainWindow):
         self.refresh_people()
 
     def _build_recognition_tab(self) -> QWidget:
+        """构造摄像头选择、预览、抓拍比对和结果展示页面。"""
         page = QWidget()
         page.setObjectName("recognitionPage")
         layout = QVBoxLayout(page)
@@ -181,6 +212,7 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_library_tab(self) -> QWidget:
+        """构造人员列表以及本地图片/当前画面录入操作页面。"""
         page = QWidget()
         page.setObjectName("libraryPage")
         layout = QVBoxLayout(page)
@@ -210,13 +242,14 @@ class MainWindow(QMainWindow):
         return page
 
     def refresh_cameras(self) -> None:
+        """扫描设备并刷新下拉列表；预览运行时拒绝刷新以保护线程状态。"""
         if self._camera_worker is not None:
             self.status_label.setText("请先停止预览，再刷新摄像头设备。")
             return
         self.camera_combo.clear()
         try:
             devices = self._camera.discover()
-        except Exception as error:  # noqa: BLE001 - OpenCV backend errors vary by platform
+        except Exception as error:  # noqa: BLE001 - OpenCV 后端错误因平台而异
             self.status_label.setText(f"设备扫描失败：{error}")
             return
         for device in devices:
@@ -225,6 +258,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText("未发现可打开的摄像头，请检查连接和系统权限。")
 
     def start_camera(self) -> None:
+        """启动选中摄像头的后台预览线程并更新按钮状态。"""
         if self.camera_combo.currentIndex() < 0:
             self.status_label.setText("请先刷新并选择摄像头。")
             return
@@ -241,6 +275,7 @@ class MainWindow(QMainWindow):
         self.compare_button.setEnabled(True)
 
     def stop_camera(self) -> None:
+        """停止预览、释放线程和设备，并清除最后一帧画面及检测框。"""
         if self._camera_worker is not None:
             self._camera_worker.stop()
             self._camera_worker.wait(2000)
@@ -257,17 +292,20 @@ class MainWindow(QMainWindow):
         self.preview_label.setText("预览已停止")
 
     def on_frame(self, frame: np.ndarray) -> None:
+        """接收后台线程的一帧画面，复制后更新预览缓存。"""
         self._current_frame = frame.copy()
         self._display_frame = self._current_frame
         self._render_frame(self._display_frame, self._last_bbox)
 
     def compare_current_frame(self) -> None:
+        """复制当前摄像头帧并异步提交一次识别任务。"""
         if self._current_frame is None:
             self.status_label.setText("尚未获得摄像头画面。")
             return
         self._start_recognition(ImageInput.from_camera(self._current_frame))
 
     def compare_local_image(self) -> None:
+        """从文件选择器读取一张本地图片并异步提交识别任务。"""
         paths = self._select_local_image_paths(multiple=False)
         if not paths:
             return
@@ -282,6 +320,7 @@ class MainWindow(QMainWindow):
         self._start_recognition(image_input)
 
     def _start_recognition(self, image_input: ImageInput) -> None:
+        """创建并启动识别线程，避免模型推理阻塞主界面。"""
         if self._recognition_worker is not None and self._recognition_worker.isRunning():
             self.status_label.setText("上一张图片仍在比对，请稍候。")
             return
@@ -299,6 +338,7 @@ class MainWindow(QMainWindow):
         self._recognition_worker.start()
 
     def on_recognition_result(self, result: RecognitionResult) -> None:
+        """把服务结果转换为识别标签、耗时和检测框展示。"""
         self._last_bbox = result.bbox
         candidate_gap = _format_candidate_gap(result)
         if result.status == "matched":
@@ -317,18 +357,22 @@ class MainWindow(QMainWindow):
             self._render_frame(self._display_frame, self._last_bbox)
 
     def on_recognition_error(self, message: str) -> None:
+        """展示识别工作线程抛出的异常信息。"""
         self.result_label.setText(f"比对失败：{message}")
         self.status_label.setText("比对任务异常结束。")
 
     def on_recognition_finished(self) -> None:
+        """识别线程结束后恢复摄像头比对按钮。"""
         if self._camera_worker is not None:
             self.compare_button.setEnabled(True)
 
     def on_camera_error(self, message: str) -> None:
+        """展示摄像头异常并停止当前预览。"""
         self.status_label.setText(f"摄像头错误：{message}")
         self.stop_camera()
 
     def add_person_from_files(self) -> None:
+        """通过文件选择器创建一个至少含一张合格样本的新人员。"""
         name, accepted = QInputDialog.getText(self, "新增人员", "人员姓名：")
         if not accepted:
             return
@@ -344,6 +388,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(self._enrollment_message(person))
 
     def add_person_from_current_frame(self) -> None:
+        """使用当前摄像头画面创建一个新人员。"""
         if self._current_frame is None:
             QMessageBox.information(self, "需要摄像头画面", "请先在实时比对页启动摄像头预览。")
             return
@@ -362,6 +407,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(self._enrollment_message(person))
 
     def append_local_images_to_selected_person(self) -> None:
+        """把用户选中的本地图片追加到当前选中人员。"""
         person_id = self._selected_person_id()
         if person_id is None:
             return
@@ -377,6 +423,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"已追加 {count} 张合格图片。")
 
     def append_sample_to_selected_person(self) -> None:
+        """把当前摄像头画面追加到当前选中人员。"""
         if self._current_frame is None:
             QMessageBox.information(self, "需要摄像头画面", "请先在实时比对页启动摄像头预览。")
             return
@@ -395,6 +442,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("已为选中人员追加一张合格图片。")
 
     def _enrollment_service(self) -> EnrollmentService:
+        """根据当前窗口依赖创建标准库录入服务。"""
         return EnrollmentService(
             repository=self._repository,
             settings=self._settings,
@@ -403,6 +451,7 @@ class MainWindow(QMainWindow):
         )
 
     def _select_local_image_paths(self, *, multiple: bool) -> list[Path]:
+        """打开图片选择器并返回用户选择的路径列表。"""
         image_filter = "图片文件 (*.jpg *.jpeg *.png *.bmp);;所有文件 (*)"
         if multiple:
             paths, _ = QFileDialog.getOpenFileNames(self, "选择图片", "", image_filter)
@@ -411,6 +460,7 @@ class MainWindow(QMainWindow):
         return [] if not path else [Path(path)]
 
     def _select_local_inputs(self) -> list[ImageInput]:
+        """将用户选择的本地路径读取为图片输入，失败时弹出提示。"""
         paths = self._select_local_image_paths(multiple=True)
         if not paths:
             return []
@@ -421,6 +471,7 @@ class MainWindow(QMainWindow):
             return []
 
     def _selected_person_id(self) -> str | None:
+        """返回标准库列表当前选中人员的编号。"""
         item = self.people_list.currentItem()
         if item is None:
             QMessageBox.information(self, "请选择人员", "请先在标准人脸库中选择一名人员。")
@@ -428,9 +479,11 @@ class MainWindow(QMainWindow):
         return str(item.data(Qt.UserRole))
 
     def _enrollment_message(self, person: Person) -> str:
+        """生成新人员录入成功后的状态提示。"""
         return f"{person.display_name} 已录入，可以参与识别。"
 
     def refresh_people(self) -> None:
+        """刷新人员及样本数量，并更新标准库完整性状态。"""
         people = self._repository.list_people()
         counts: dict[str, int] = {}
         for sample in self._repository.list_samples():
@@ -458,6 +511,7 @@ class MainWindow(QMainWindow):
         frame: np.ndarray,
         bbox: tuple[float, float, float, float] | None,
     ) -> None:
+        """把 BGR 帧转换成 Qt 图片，并可选绘制检测框。"""
         rgb = np.ascontiguousarray(frame[:, :, ::-1])
         height, width, _ = rgb.shape
         image = QImage(rgb.data, width, height, width * 3, QImage.Format_RGB888).copy()
@@ -473,12 +527,14 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        """关闭窗口前停止摄像头并释放数据库连接。"""
         self.stop_camera()
         self._repository.close()
         event.accept()
 
 
 def _save_bgr_image(path: Path, frame: np.ndarray) -> None:
+    """使用 OpenCV 将 BGR 图像保存到指定路径。"""
     try:
         import cv2
     except ImportError as error:
@@ -489,6 +545,7 @@ def _save_bgr_image(path: Path, frame: np.ndarray) -> None:
 
 
 def _format_candidate_gap(result: RecognitionResult) -> str:
+    """将识别结果中的候选差距格式化为界面文本。"""
     if result.top_score is None or result.runner_up_score is None:
         return "候选差距 --"
     return f"候选差距 {result.top_score - result.runner_up_score:.3f}"

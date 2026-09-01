@@ -17,14 +17,18 @@ from .repository import FaceRepository, SampleInput
 
 
 class FaceExtractor(Protocol):
-    def extract_single_face(self, frame: np.ndarray) -> FaceObservation: ...
+    """提供单人脸检测和特征提取能力的接口。"""
+
+    def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        """从 BGR 图像中提取一张通过质量门控的人脸。"""
+        ...
 
 
 ImageSaver = Callable[[Path, np.ndarray], None]
 
 
 class EnrollmentService:
-    """Coordinates quality checks, image saving, and durable face-library updates."""
+    """协调质量检查、图片保存和标准人脸库持久化。"""
 
     def __init__(
         self,
@@ -34,15 +38,22 @@ class EnrollmentService:
         face_engine: FaceExtractor,
         image_saver: ImageSaver,
     ) -> None:
+        """保存录入服务依赖，不在构造阶段执行人脸推理。"""
         self.repository = repository
         self.settings = settings
         self.face_engine = face_engine
         self.image_saver = image_saver
 
     def create_from_inputs(self, display_name: str, inputs: list[ImageInput]) -> Person:
-        """Create one identity from quality-approved camera or local-image inputs.
+        """从摄像头或本地图片创建一个新身份。
 
-        The method has no pose sequence. The first usable sample activates the identity.
+        参数：
+            display_name：要显示的人员姓名。
+            inputs：摄像头或本地图片输入，至少包含一项。
+        返回：
+            新建的人员对象；第一张合格样本写入后即可参与识别。
+        前置条件：
+            所有输入都必须恰好检测到一张符合当前质量规则的人脸；任一项失败都会回滚。
         """
 
         normalized_name = display_name.strip()
@@ -95,7 +106,16 @@ class EnrollmentService:
             _remove_empty_directory(staging_dir.parent)
 
     def append_from_inputs(self, person_id: str, inputs: Sequence[ImageInput]) -> int:
-        """Append camera or local-image samples without imposing a pose sequence."""
+        """向已有身份追加摄像头或本地图片样本。
+
+        参数：
+            person_id：已存在身份的编号。
+            inputs：待追加的图片输入，至少包含一项。
+        返回：
+            实际追加的合格样本数量。
+        前置条件：
+            所有输入都必须通过单人脸和质量检查；任一项失败都会回滚本次追加。
+        """
 
         if self.repository.get_person(person_id) is None:
             raise ValueError("person does not exist")
@@ -154,6 +174,7 @@ class EnrollmentService:
             _remove_empty_directory(staging_dir.parent)
 
 def _sha256_file(path: Path) -> str:
+    """分块计算图片文件的 SHA-256 哈希。"""
     digest = hashlib.sha256()
     with path.open("rb") as image_file:
         for chunk in iter(lambda: image_file.read(65536), b""):
@@ -162,6 +183,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _remove_empty_directory(path: Path) -> None:
+    """仅在目录为空时清理临时目录，避免影响其他并发操作。"""
     try:
         path.rmdir()
     except OSError:

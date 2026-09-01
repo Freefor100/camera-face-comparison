@@ -13,6 +13,7 @@ from camera_face_comparison.experiment import ExperimentRecord, evaluate_experim
 
 
 def _load_records(path: Path) -> list[ExperimentRecord]:
+    """读取 JSONL 实验记录并恢复为实验领域对象。"""
     records: list[ExperimentRecord] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
@@ -53,6 +54,7 @@ def _load_records(path: Path) -> list[ExperimentRecord]:
 
 
 def _metrics_to_dict(metrics) -> dict[str, float | int | None]:
+    """将实验统计对象转换为可序列化的字典。"""
     return {
         "total": metrics.total,
         "known_total": metrics.known_total,
@@ -70,6 +72,7 @@ def _metrics_to_dict(metrics) -> dict[str, float | int | None]:
 
 
 def main() -> int:
+    """在同一批探针上运行基线与优化版评测并输出报告。"""
     parser = argparse.ArgumentParser(
         description="Compare baseline and optimized recognition metrics on the same probes."
     )

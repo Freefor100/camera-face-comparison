@@ -13,7 +13,10 @@ from camera_face_comparison.repository import FaceRepository
 
 
 class FakeFaceEngine:
+    """返回固定合格观察结果的完整性测试引擎。"""
+
     def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        """为任意输入返回固定的人脸特征和质量指标。"""
         return FaceObservation(
             bbox=(0.0, 0.0, 180.0, 180.0),
             detection_score=0.95,
@@ -24,12 +27,13 @@ class FakeFaceEngine:
 
 
 def _save_image(path: Path, frame: np.ndarray) -> None:
+    """保存完整性测试使用的样本文件占位内容。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"valid sample")
 
 
 def test_library_verification_reports_a_replaced_sample_image(tmp_path) -> None:
-    """A file changed outside the application must stop the library from being trusted."""
+    """应用外部修改样本文件后，完整性检查必须阻止标准库继续被信任。"""
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)

@@ -14,7 +14,7 @@ from .recognition import (
 
 @dataclass(frozen=True)
 class ExperimentRecord:
-    """Scores for one labelled probe image, kept independently of private images."""
+    """一张带标签探针图片的得分记录，与私人图片本身分离保存。"""
 
     expected_person_id: str | None
     sample_scores: Mapping[str, Sequence[float]]
@@ -25,6 +25,8 @@ class ExperimentRecord:
 
 @dataclass(frozen=True)
 class ExperimentMetrics:
+    """一组实验记录的开放集识别统计量。"""
+
     total: int
     known_total: int
     known_correct: int
@@ -35,15 +37,17 @@ class ExperimentMetrics:
 
     @property
     def known_accuracy(self) -> float | None:
+        """返回已知探针被正确识别的比例。"""
         return self.known_correct / self.known_total if self.known_total else None
 
     @property
     def unknown_rejection_rate(self) -> float | None:
+        """返回未知探针被拒识的比例。"""
         return self.unknown_rejected / self.unknown_total if self.unknown_total else None
 
     @property
     def false_positive_identification_rate(self) -> float | None:
-        """Unknown probes incorrectly assigned to a library identity (FPIR)."""
+        """返回未知探针被错误分配给库内身份的比例（FPIR）。"""
 
         if not self.unknown_total:
             return None
@@ -51,7 +55,7 @@ class ExperimentMetrics:
 
     @property
     def false_negative_identification_rate(self) -> float | None:
-        """Known probes that were rejected or assigned to the wrong identity (FNIR)."""
+        """返回被拒识或分配给错误身份的已知探针比例（FNIR）。"""
 
         if not self.known_total:
             return None
@@ -59,7 +63,7 @@ class ExperimentMetrics:
 
     @property
     def rank_one_identification_rate(self) -> float | None:
-        """Rank-1 closed-set-style correctness reported alongside the open-set rates."""
+        """返回与开放集指标并列报告的 Rank-1 正确率。"""
 
         return self.known_accuracy
 
@@ -72,7 +76,19 @@ def evaluate_experiments(
     top_k: int = 2,
     quality_tiers: Mapping[str, QualityTierPolicy] | None = None,
 ) -> tuple[ExperimentMetrics, ExperimentMetrics]:
-    """Evaluate the simple baseline and the robust rule on exactly the same probes."""
+    """在完全相同的探针上评估简单基线和当前优化规则。
+
+    参数：
+        records：已计算样本得分、标签和耗时的实验记录。
+        match_threshold：基线使用的最高候选阈值。
+        min_margin：基线之外的候选差距阈值。
+        top_k：优化聚合使用的样本数。
+        quality_tiers：按探针质量层级选择阈值的可选策略。
+    返回：
+        `(baseline_metrics, optimized_metrics)` 两组统计结果。
+    前置条件：
+        两种方法必须接收同一批记录，避免数据划分差异影响比较。
+    """
 
     baseline_decisions = [
         decide_match(
@@ -97,6 +113,7 @@ def evaluate_experiments(
 
 
 def _optimized_person_scores(record: ExperimentRecord, *, top_k: int) -> dict[str, float]:
+    """根据记录中的质量分数计算当前优化版的人级别得分。"""
     if record.sample_quality_scores is None:
         return aggregate_person_scores(record.sample_scores, top_k=top_k)
     scores_with_quality = {
@@ -115,18 +132,21 @@ def _policy_for(
     match_threshold: float,
     min_margin: float,
 ) -> QualityTierPolicy:
+    """选择当前探针质量层级对应的识别策略。"""
     if quality_tiers is not None and record.probe_quality_tier in quality_tiers:
         return quality_tiers[record.probe_quality_tier]
     return QualityTierPolicy(match_threshold=match_threshold, min_margin=min_margin)
 
 
 def _quality_at(scores: Sequence[float], index: int) -> float:
+    """按下标读取质量分数，缺失时返回中性默认值。"""
     return scores[index] if index < len(scores) else 0.6
 
 
 def _highest_sample_scores(
     sample_scores: Mapping[str, Sequence[float]],
 ) -> dict[str, float]:
+    """为基线方法取每个身份的最高单样本得分。"""
     return {
         person_id: max(scores)
         for person_id, scores in sample_scores.items()
@@ -137,6 +157,7 @@ def _highest_sample_scores(
 def _metrics(
     records: Sequence[ExperimentRecord], decisions: Sequence[MatchDecision]
 ) -> ExperimentMetrics:
+    """根据真实标签和判定结果计算开放集指标。"""
     known_total = 0
     known_correct = 0
     unknown_total = 0

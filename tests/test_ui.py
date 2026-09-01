@@ -17,33 +17,41 @@ from camera_face_comparison.ui.main_window import MainWindow
 
 
 class FakeCamera:
+    """提供固定设备和帧的界面测试摄像头替身。"""
+
     def __init__(self) -> None:
+        """初始化设备扫描调用计数器。"""
         self.discover_calls = 0
 
     def discover(self) -> list[CameraDevice]:
+        """返回一个固定的外置摄像头设备。"""
         self.discover_calls += 1
         return [CameraDevice(index=3, label="Fake external camera")]
 
     def open(self, index: int) -> None:
+        """确认主窗口使用了预期的摄像头索引。"""
         assert index == 3
 
     def read_frame(self) -> np.ndarray:
+        """返回一帧固定尺寸的黑色测试图像。"""
         return np.zeros((120, 160, 3), dtype=np.uint8)
 
     def close(self) -> None:
-        pass
+        """模拟释放测试摄像头。"""
 
 
 class FakeFaceEngine:
-    pass
+    """仅用于窗口装配测试的空人脸引擎替身。"""
 
 
 @pytest.fixture(scope="module")
 def qapplication() -> QApplication:
+    """返回模块级 Qt 应用实例，供离屏界面测试复用。"""
     return QApplication.instance() or QApplication([])
 
 
 def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplication) -> None:
+    """主窗口应显示标准库，并在启动/停止预览时更新控件状态。"""
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
     person = repository.create_person_with_samples(
@@ -93,7 +101,7 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
 
 
 def test_stopping_preview_clears_the_last_camera_frame(tmp_path, qapplication) -> None:
-    """A stopped camera must not leave a stale image that looks like a live preview."""
+    """停止摄像头后不能留下看起来仍在实时更新的旧画面。"""
 
     settings = load_settings(tmp_path)
     window = MainWindow(
@@ -113,6 +121,7 @@ def test_stopping_preview_clears_the_last_camera_frame(tmp_path, qapplication) -
 
 
 def test_recognition_result_shows_candidate_gap(tmp_path, qapplication) -> None:
+    """主窗口应显示识别相似度、候选差距和耗时。"""
     settings = load_settings(tmp_path)
     window = MainWindow(
         settings=settings,

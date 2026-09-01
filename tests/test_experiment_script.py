@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_experiment_script_writes_a_same_dataset_comparison(tmp_path) -> None:
+    """实验脚本必须输出同一批数据上的基线与优化版结果。"""
     scores_path = tmp_path / "scores.jsonl"
     output_path = tmp_path / "report.json"
     scores_path.write_text(
@@ -47,7 +48,7 @@ def test_experiment_script_writes_a_same_dataset_comparison(tmp_path) -> None:
 
 
 def test_experiment_script_replays_quality_aware_records(tmp_path) -> None:
-    """Exported LFW records must retain enough information to reproduce the optimized rule."""
+    """导出的 LFW 记录必须保留足够信息以复现优化版规则。"""
 
     scores_path = tmp_path / "scores.jsonl"
     output_path = tmp_path / "report.json"

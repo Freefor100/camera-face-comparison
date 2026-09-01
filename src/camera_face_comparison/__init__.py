@@ -1,1 +1,1 @@
-"""Cross-platform offline camera face-comparison application."""
+"""跨平台离线摄像头人脸比对应用。"""

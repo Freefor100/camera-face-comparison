@@ -8,7 +8,7 @@ from camera_face_comparison.lfw_dataset import build_lfw_protocol, write_lfw_pro
 
 
 def test_lfw_protocol_keeps_known_and_unknown_people_disjoint(tmp_path) -> None:
-    """A reproducible open-set split must never enroll an identity used as unknown."""
+    """可复现的开放集划分不能把未知身份同时放入标准库。"""
 
     dataset_dir = tmp_path / "lfw-deepfunneled"
     for name in ("Alice", "Bob", "Carol", "Dave", "Eve"):
@@ -38,11 +38,12 @@ def test_lfw_protocol_keeps_known_and_unknown_people_disjoint(tmp_path) -> None:
 
 
 def test_lfw_downloader_uses_the_get_accessible_mirror_and_reports_network_errors(tmp_path) -> None:
-    """A failed public download must name a usable source and leave a clear recovery message."""
+    """公共数据下载失败时必须指出可用来源并给出清晰的恢复提示。"""
 
     requested_urls: list[str] = []
 
     def unavailable_downloader(url: str, destination: str) -> None:
+        """记录下载地址并模拟网络中断。"""
         requested_urls.append(url)
         raise OSError("network interrupted")
 
@@ -55,7 +56,7 @@ def test_lfw_downloader_uses_the_get_accessible_mirror_and_reports_network_error
 
 
 def test_lfw_loader_rejects_an_unverified_archive_without_extracting_it(tmp_path) -> None:
-    """A truncated archive must never be treated as a valid local dataset."""
+    """不完整压缩包不能被当作有效的本地数据集解压使用。"""
 
     datasets_dir = tmp_path / "datasets"
     datasets_dir.mkdir()

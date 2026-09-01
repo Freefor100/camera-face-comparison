@@ -14,7 +14,7 @@ LFW_FUNNELED_SHA256 = "b47c8422c8cded889dc5a13418c4bc2abbda121092b3533a83306f90d
 
 @dataclass(frozen=True)
 class LfwProbe:
-    """One held-out LFW image and its open-set evaluation label."""
+    """一张留出的 LFW 图片及其开放集评测标签。"""
 
     relative_path: str
     expected_person_id: str | None
@@ -22,7 +22,7 @@ class LfwProbe:
 
 @dataclass(frozen=True)
 class LfwProtocol:
-    """Deterministic enrollment and probe split stored without copying image data."""
+    """不复制图片、仅保存相对路径的确定性录入集与探针集划分。"""
 
     enrollment: dict[str, tuple[str, ...]]
     probes: tuple[LfwProbe, ...]
@@ -34,7 +34,17 @@ def ensure_lfw_dataset(
     download: bool,
     downloader: Callable[[str, str], object] | None = None,
 ) -> Path:
-    """Return the local LFW directory, downloading only after explicit user opt-in."""
+    """返回本地 LFW 目录，仅在用户明确指定时下载数据集。
+
+    参数：
+        data_dir：数据集存放的运行数据目录。
+        download：数据集不存在时是否允许联网下载。
+        downloader：可注入的下载器，主要用于测试。
+    返回：
+        已验证的 LFW 图片目录。
+    前置条件：
+        不下载时目录或压缩包必须已存在；下载时网络源必须可用。
+    """
 
     datasets_dir = data_dir / "datasets"
     target = datasets_dir / "lfw_funneled"
@@ -89,7 +99,19 @@ def build_lfw_protocol(
     enrollment_per_identity: int,
     probes_per_identity: int,
 ) -> LfwProtocol:
-    """Create a deterministic open-set split from locally available LFW identities."""
+    """从本地 LFW 身份生成确定性的开放集录入/探针划分。
+
+    参数：
+        dataset_dir：LFW 图片根目录。
+        known_identity_count：进入标准库的身份数。
+        unknown_identity_count：只作为未知探针的身份数。
+        enrollment_per_identity：每个已知身份的录入图片数。
+        probes_per_identity：每个身份的探针图片数。
+    返回：
+        已知身份和未知身份不相交的评测协议。
+    前置条件：
+        每个身份必须有足够图片，且计数参数必须为正数。
+    """
 
     if min(
         known_identity_count,
@@ -130,7 +152,7 @@ def build_lfw_protocol(
 
 
 def write_lfw_protocol(protocol: LfwProtocol, output_path: Path) -> None:
-    """Write a portable JSON protocol whose paths remain relative to the LFW folder."""
+    """写出路径相对于 LFW 根目录的可迁移 JSON 评测协议。"""
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -142,6 +164,7 @@ def write_lfw_protocol(protocol: LfwProtocol, output_path: Path) -> None:
 
 
 def _identities_with_at_least(dataset_dir: Path, minimum_images: int) -> list[Path]:
+    """筛选出图片数量达到要求的 LFW 身份，并按名称排序。"""
     if not dataset_dir.is_dir():
         raise FileNotFoundError(f"LFW directory does not exist: {dataset_dir}")
     return [
@@ -152,6 +175,7 @@ def _identities_with_at_least(dataset_dir: Path, minimum_images: int) -> list[Pa
 
 
 def _image_paths(identity_dir: Path) -> list[Path]:
+    """返回一个身份目录下按文件名排序的图片路径。"""
     return sorted(
         path
         for path in identity_dir.iterdir()
@@ -160,10 +184,12 @@ def _image_paths(identity_dir: Path) -> list[Path]:
 
 
 def _relative_to_dataset(path: Path, dataset_dir: Path) -> str:
+    """把数据集内的绝对路径转换为可写入协议的相对路径。"""
     return path.relative_to(dataset_dir).as_posix()
 
 
 def _safe_extract(archive_path: Path, destination: Path) -> None:
+    """校验压缩包成员路径后再安全解压，防止路径穿越。"""
     destination_root = destination.resolve()
     with tarfile.open(archive_path, "r:gz") as archive:
         for member in archive.getmembers():
@@ -176,6 +202,7 @@ def _safe_extract(archive_path: Path, destination: Path) -> None:
 
 
 def _download_with_resume(url: str, partial_path: Path) -> None:
+    """使用 HTTP Range 从临时文件大小处继续下载数据集压缩包。"""
     offset = partial_path.stat().st_size if partial_path.exists() else 0
     request = Request(url, headers={"Range": f"bytes={offset}-"} if offset else {})
     with urlopen(request, timeout=60) as response:
@@ -186,6 +213,7 @@ def _download_with_resume(url: str, partial_path: Path) -> None:
 
 
 def _sha256_file(path: Path) -> str:
+    """分块计算数据集压缩包或文件的 SHA-256 哈希。"""
     digest = hashlib.sha256()
     with path.open("rb") as input_file:
         for chunk in iter(lambda: input_file.read(1024 * 1024), b""):

@@ -14,12 +14,16 @@ from .lfw_dataset import LfwProtocol
 
 
 class EvaluationFaceEngine(Protocol):
-    def extract_single_face(self, frame: np.ndarray) -> FaceObservation: ...
+    """评测流程所需的最小人脸特征提取接口。"""
+
+    def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        """从一张 BGR 图片提取通过质量门控的人脸。"""
+        ...
 
 
 @dataclass(frozen=True)
 class DatasetRejection:
-    """One LFW image excluded before scoring, with a reproducible reason."""
+    """一张在打分前被排除的 LFW 图片及可复现的原因。"""
 
     relative_path: str
     reason: str
@@ -27,7 +31,7 @@ class DatasetRejection:
 
 @dataclass(frozen=True)
 class LfwEvaluationRun:
-    """Usable scores and explicit exclusions from one fixed LFW protocol."""
+    """一次固定 LFW 协议产生的可用得分和明确排除项。"""
 
     gallery_person_ids: tuple[str, ...]
     records: tuple[ExperimentRecord, ...]
@@ -42,7 +46,18 @@ def evaluate_lfw_protocol(
     settings: Settings,
     face_engine: EvaluationFaceEngine,
 ) -> LfwEvaluationRun:
-    """Extract LFW embeddings and return records for the same open-set scoring code as the app."""
+    """提取 LFW 特征，并复用应用的开放集打分代码生成评测记录。
+
+    参数：
+        dataset_dir：LFW 图片根目录。
+        protocol：固定的已知/未知身份划分。
+        settings：评测时使用的质量和识别参数。
+        face_engine：提供人脸检测和特征提取的模型适配器。
+    返回：
+        可用于基础版与优化版同条件比较的评测运行结果。
+    前置条件：
+        协议中的相对路径必须存在且能被图片读取器解码。
+    """
 
     gallery_embeddings: dict[str, list[np.ndarray]] = {}
     gallery_quality: dict[str, list[float]] = {}
@@ -101,6 +116,7 @@ def _extract_valid_embedding(
     settings: Settings,
     face_engine: EvaluationFaceEngine,
 ) -> tuple[np.ndarray, QualityProfile]:
+    """读取一张 LFW 图片并返回有效特征，失败时抛出可记录的原因。"""
     image_input = ImageInput.from_file(image_path, source_type="dataset")
     observed_face = face_engine.extract_single_face(image_input.frame)
     face = validate_single_face([observed_face], settings)

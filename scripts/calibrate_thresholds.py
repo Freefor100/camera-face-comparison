@@ -13,10 +13,20 @@ from camera_face_comparison.config import load_settings, write_quality_tier_thre
 
 
 def _values(start: int, stop: int) -> list[float]:
+    """生成指定百分比范围内、步长为百分之一的阈值候选。"""
     return [value / 100 for value in range(start, stop + 1)]
 
 
 def _load_records(path: Path) -> list[CalibrationRecord]:
+    """读取 JSONL 标定记录并转换为领域对象。
+
+    参数：
+        path：每行包含真实身份和人级别得分的 JSONL 文件。
+    返回：
+        可供阈值搜索使用的标定记录列表。
+    前置条件：
+        每行必须包含 `expected_person_id` 和 `person_scores` 字段。
+    """
     records: list[CalibrationRecord] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
@@ -34,6 +44,7 @@ def _load_records(path: Path) -> list[CalibrationRecord]:
 
 
 def main() -> int:
+    """读取标定数据、搜索阈值并写回指定质量层级的配置。"""
     parser = argparse.ArgumentParser(
         description="Calibrate the local match threshold and candidate-gap threshold."
     )

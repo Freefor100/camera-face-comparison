@@ -8,7 +8,7 @@ from camera_face_comparison.config import (
 
 
 def test_load_settings_creates_portable_data_layout(tmp_path) -> None:
-    """Starting from an empty data directory must create every runtime location."""
+    """从空数据目录启动时必须创建全部运行所需目录。"""
 
     settings = load_settings(tmp_path)
 
@@ -21,7 +21,7 @@ def test_load_settings_creates_portable_data_layout(tmp_path) -> None:
 
 
 def test_write_recognition_thresholds_persists_calibration_result(tmp_path) -> None:
-    """Calibration must alter runtime behavior after the next application start."""
+    """标定结果必须在下一次应用启动后改变运行参数。"""
 
     settings = load_settings(tmp_path)
     write_recognition_thresholds(settings, match_threshold=0.61, min_margin=0.09)
@@ -33,7 +33,7 @@ def test_write_recognition_thresholds_persists_calibration_result(tmp_path) -> N
 
 
 def test_settings_exposes_quality_tier_policy(tmp_path) -> None:
-    """Open-set behavior must read quality-tier policy from portable config."""
+    """开放集行为必须从可迁移配置中读取质量层级策略。"""
 
     settings = load_settings(tmp_path)
 
@@ -46,7 +46,7 @@ def test_settings_exposes_quality_tier_policy(tmp_path) -> None:
 
 
 def test_write_quality_tier_thresholds_keeps_the_other_probe_policy(tmp_path) -> None:
-    """Medium-quality calibration must not silently overwrite the high-quality policy."""
+    """中等质量标定不能静默覆盖高质量探针策略。"""
 
     settings = load_settings(tmp_path)
     high_before = settings.quality_tiers["high"]

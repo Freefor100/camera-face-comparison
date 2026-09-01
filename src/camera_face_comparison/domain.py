@@ -8,7 +8,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Person:
-    """A named identity in the local face library."""
+    """本地标准人脸库中的一个命名身份。"""
 
     id: str
     display_name: str
@@ -17,7 +17,7 @@ class Person:
 
 @dataclass(frozen=True)
 class FaceSample:
-    """One enrolled face image and its extracted embedding."""
+    """一张已录入的人脸图片及其特征向量。"""
 
     id: str
     person_id: str
@@ -33,7 +33,7 @@ class FaceSample:
 
 @dataclass(frozen=True)
 class RecognitionResult:
-    """The UI-ready outcome of a single recognition attempt."""
+    """一次识别尝试的、可直接交给界面展示的结果。"""
 
     status: str
     person_id: str | None
