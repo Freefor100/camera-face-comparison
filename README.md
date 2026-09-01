@@ -17,11 +17,11 @@
 
 | 任务书要求 | 当前状态 | 完成度判断 |
 | --- | --- | --- |
-| 外置摄像头实时采集与拍照 | 已实现跨平台设备扫描、预览线程、停止清屏和抓拍入口 | **代码已实现；需要真实硬件验证** |
+| 外置摄像头实时采集与拍照 | 已实现跨平台设备扫描、预览线程、停止清屏和抓拍入口 | **Phase 1 真实硬件链路已通过** |
 | 不少于 3 个身份的标准库 | 已实现人员、图片和 embedding 的持久化；尚未建立最终 Demo Gallery | **代码已实现；最终数据待 Phase 6** |
 | 姓名/未知人员判别 | 已实现单脸检查、1:N 打分、阈值和候选差距拒识 | **代码已实现；需要数据标定** |
-| 系统 UI | 已实现识别页、标准库页、状态和异常反馈 | **代码已实现；需要真实硬件与交互验收** |
-| 标准库动态扩容 | 已实现本地图片和当前画面新增、追加及重启恢复 | **代码已实现；需要完整链路验收** |
+| 系统 UI | 已实现识别页、标准库页、状态和异常反馈 | **Phase 1 功能链路已通过；视觉收尾在 Phase 5** |
+| 标准库动态扩容 | 已实现本地图片和当前画面新增、追加及重启恢复 | **Phase 1 完整链路已通过** |
 | 至少一项扩展功能 | 计划优先实现“短时间窗口多帧采集 + 质量择优”，并与单帧基线同条件比较 | **尚未完成扩展** |
 | 优化前后对比证据 | 已有实验脚本和 LFW 小样本烟雾测试，但没有正式标定/独立评测结果 | **需要数据标定与鲁棒性实验** |
 
@@ -50,14 +50,16 @@
 - [x] 配置文件只接受当前完整结构，不解析旧字段或为缺失字段回退。
 - [x] 修正任务书提取和当前实现说明。
 
-### Phase 1：基础链路验收
+### Phase 1：基础链路验收（已完成）
 
-- [ ] 建立可随时删除的 Development Gallery，不导入最终展示人员。
-- [ ] 验证外置摄像头扫描、预览、停止清屏和抓拍录入。
-- [ ] 验证单张/多张本地图片录入、当前画面录入和动态追加。
-- [ ] 验证 Known、Unknown、低质量输入、多人脸和系统错误提示。
-- [ ] 验证关闭程序后重启，人员和样本仍可正常读取和识别。
-- [ ] 记录问题清单；这些临时身份和结果不进入最终验收数据。
+验收过程见 [Phase 1 基础链路验收记录](docs/phase-1-validation.md)，跨阶段问题由 [已知问题台账](docs/known-issues.md) 传递和关闭。
+
+- [x] 建立可随时删除的 Development Gallery，不导入最终展示人员。
+- [x] 验证外置摄像头扫描、连续采集、停止清屏、重开和摄像头来源录入。
+- [x] 验证单张/多张本地图片录入、摄像头来源录入和动态追加。
+- [x] 验证 Known、Unknown、低质量输入、多人脸和系统错误提示。
+- [x] 验证关闭数据库后重开，人员、样本、完整性状态和识别链路仍然正常。
+- [x] 记录问题清单；这些临时身份和结果不进入最终验收数据。
 
 ### Phase 2：算法基线
 
@@ -102,7 +104,7 @@
 
 ## 可实现优化与系统局限性
 
-扩展功能是课程加分项，不是可有可无的装饰。本项目会优先做能在现有 CPU 桌面应用中完整实现、复测和解释的优化：输入质量门控、多帧质量择优，以及时间允许时的简单质量感知模板。这类方法有明确的研究依据，例如多图质量加权聚合的 [Quality Aware Network](https://openaccess.thecvf.com/content_cvpr_2017/html/Liu_Quality_Aware_Network_CVPR_2017_paper.html)，以及用于估计人脸图像可识别性的 [SER-FIQ](https://openaccess.thecvf.com/content_CVPR_2020/html/Terhorst_SER-FIQ_Unsupervised_Estimation_of_Face_Image_Quality_Based_on_Stochastic_CVPR_2020_paper.html) 和 [MagFace](https://openaccess.thecvf.com/content/CVPR2021/html/Meng_MagFace_A_Universal_Representation_for_Face_Recognition_and_Quality_Assessment_CVPR_2021_paper.html)。课设实现采用可解释的工程简化，不声称复现这些论文的训练方法或效果。
+扩展功能是课程加分项，不是可有可无的装饰。本项目会优先做能在现有 CPU 桌面应用中完整实现、复测和解释的优化：输入质量门控、多帧质量择优，以及时间允许时的简单质量感知模板。这类方法有明确的研究依据，例如多图质量加权聚合的 [Quality Aware Network](https://openaccess.thecvf.com/content_cvpr_2017/html/Liu_Quality_Aware_Network_CVPR_2017_paper.html)，以及用于估计人脸图像可识别性的 [SER-FIQ](https://openaccess.thecvf.com/content_CVPR_2020/html/Terhorst_SER-FIQ_Unsupervised_Estimation_of_Face_Image_Quality_Based_on_Stochastic_CVPR_2020_paper.html) 和 [MagFace](https://openaccess.thecvf.com/content/CVPR2021/html/Meng_MagFace_A_Universal_Representation_for_Face_Recognition_and_Quality_Assessment_CVPR_2021_paper.html)。课设实现采用可解释的工程简化，不去复现这些论文的训练方法或效果。
 
 下面的问题不放进 TODO，也不承诺在课设中解决；最终报告会把它们作为系统局限性，并保留失败样例：
 
@@ -229,7 +231,7 @@ python -m compileall -q src scripts tests
 
 ## 摄像头故障排查
 
-- Linux：`ls /dev/video*` 查看系统识别的设备，并确认当前用户有视频设备权限。程序通过 OpenCV 设备索引打开，Linux 优先 V4L2，不写死 `/dev/video0`。
+- Linux：`ls /dev/video*` 查看系统识别的设备，并确认当前用户有视频设备权限。程序把设备索引交给 OpenCV，Linux 优先使用 V4L2；不自行读取 `/dev/video*` 字节流，也不把设备路径写死为 `/dev/video0`。节点存在不代表一定能提供采集画面，例如同一 UVC 设备可能同时暴露视频节点和非采集节点。
 - Windows：在隐私设置中允许桌面应用访问摄像头；程序优先 DirectShow，失败时回退 OpenCV 通用后端。
 - macOS：在“隐私与安全性”中授予终端或 Python 摄像头权限；程序优先 AVFoundation。
 - 模型缺失：在有网络的机器运行 `scripts/prepare_models.py`，再复制 `data/models/`。
