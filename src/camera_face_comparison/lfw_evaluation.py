@@ -29,7 +29,7 @@ class DatasetRejection:
 class LfwEvaluationRun:
     """Usable scores and explicit exclusions from one fixed LFW protocol."""
 
-    active_person_ids: tuple[str, ...]
+    gallery_person_ids: tuple[str, ...]
     records: tuple[ExperimentRecord, ...]
     enrollment_rejections: tuple[DatasetRejection, ...]
     probe_rejections: tuple[DatasetRejection, ...]
@@ -89,7 +89,7 @@ def evaluate_lfw_protocol(
             )
         )
     return LfwEvaluationRun(
-        active_person_ids=tuple(gallery_embeddings),
+        gallery_person_ids=tuple(gallery_embeddings),
         records=tuple(records),
         enrollment_rejections=tuple(enrollment_rejections),
         probe_rejections=tuple(probe_rejections),

@@ -76,8 +76,8 @@ def test_enrollment_rolls_back_when_an_image_cannot_be_saved(tmp_path) -> None:
     repository.close()
 
 
-def test_one_valid_input_activates_a_person(tmp_path) -> None:
-    """The first accepted camera or local image makes an identity recognizable."""
+def test_one_valid_camera_input_creates_a_person(tmp_path) -> None:
+    """The first accepted camera image creates an identity that can be recognized."""
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
@@ -94,7 +94,6 @@ def test_one_valid_input_activates_a_person(tmp_path) -> None:
     restored = repository.get_person(person.id)
     samples = repository.list_samples(person.id)
     assert restored is not None
-    assert restored.lifecycle == "active"
     assert len(samples) == 1
     assert all(sample.source_type == "camera" for sample in samples)
     assert all(sample.image_sha256 for sample in samples)
@@ -102,7 +101,7 @@ def test_one_valid_input_activates_a_person(tmp_path) -> None:
     repository.close()
 
 
-def test_one_valid_local_image_activates_a_person(tmp_path) -> None:
+def test_one_valid_local_image_creates_a_person(tmp_path) -> None:
     settings = load_settings(tmp_path / "data")
     repository = FaceRepository(settings.database_path)
     service = EnrollmentService(
@@ -119,39 +118,12 @@ def test_one_valid_local_image_activates_a_person(tmp_path) -> None:
     restored = repository.get_person(person.id)
     samples = repository.list_samples(person.id)
     assert restored is not None
-    assert restored.lifecycle == "active"
     assert len(samples) == 1
     assert samples[0].source_type == "file"
     repository.close()
 
 
-def test_local_inputs_can_activate_an_existing_draft_person(tmp_path) -> None:
-    """Adding the first valid sample activates an otherwise empty draft identity."""
-
-    settings = load_settings(tmp_path)
-    repository = FaceRepository(settings.database_path)
-    service = EnrollmentService(
-        repository=repository,
-        settings=settings,
-        face_engine=DiverseFakeFaceEngine(),
-        image_saver=_save_image,
-    )
-    person = repository.create_person("Alice")
-
-    service.append_from_inputs(
-        person.id,
-        [ImageInput.from_camera(_textured_frame(120))],
-    )
-
-    restored = repository.get_person(person.id)
-    samples = repository.list_samples(person.id)
-    assert restored is not None
-    assert restored.lifecycle == "active"
-    assert len(samples) == 1
-    repository.close()
-
-
-def test_multiple_samples_can_be_appended_after_activation(tmp_path) -> None:
+def test_multiple_samples_can_be_appended_after_creation(tmp_path) -> None:
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
     service = EnrollmentService(
@@ -175,7 +147,6 @@ def test_multiple_samples_can_be_appended_after_activation(tmp_path) -> None:
     restored = repository.get_person(person.id)
     assert added == 2
     assert restored is not None
-    assert restored.lifecycle == "active"
     assert len(repository.list_samples(person.id)) == 3
     repository.close()
 

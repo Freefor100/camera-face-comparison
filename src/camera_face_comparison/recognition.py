@@ -84,13 +84,8 @@ class RecognitionService:
                 )
                 return self._record_and_return(result)
 
-            people = [person for person in self._repository.list_people() if person.lifecycle == "active"]
-            active_person_ids = {person.id for person in people}
-            samples = [
-                sample
-                for sample in self._repository.list_samples()
-                if sample.person_id in active_person_ids
-            ]
+            people = self._repository.list_people()
+            samples = self._repository.list_samples()
             embeddings_by_person: dict[str, list[np.ndarray]] = {}
             quality_by_person: dict[str, list[float]] = {}
             for sample in samples:
@@ -118,7 +113,7 @@ class RecognitionService:
                 reason=decision.reason,
                 bbox=probe.bbox,
             )
-        except (FaceInputError, ValueError) as error:
+        except (FaceInputError, TypeError, ValueError) as error:
             result = RecognitionResult(
                 status="invalid",
                 person_id=None,
@@ -249,15 +244,13 @@ def recognize_embedding(
 
 
 def _stored_quality_score(quality: Mapping[str, float | str]) -> float:
-    raw_score = quality.get("quality_score")
-    if isinstance(raw_score, (float, int)):
-        return float(raw_score)
-    tier = quality.get("tier")
-    if tier == "high":
-        return 0.9
-    if tier == "medium":
-        return 0.6
-    return 0.6
+    raw_score = quality["quality_score"]
+    if not isinstance(raw_score, (float, int)):
+        raise TypeError("stored quality_score must be numeric")
+    score = float(raw_score)
+    if not 0.0 <= score <= 1.0:
+        raise ValueError("stored quality_score must be between 0 and 1")
+    return score
 
 
 def _quality_at(scores: Sequence[float], index: int) -> float:

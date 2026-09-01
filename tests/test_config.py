@@ -30,7 +30,6 @@ def test_write_recognition_thresholds_persists_calibration_result(tmp_path) -> N
 
     assert reloaded.match_threshold == 0.61
     assert reloaded.min_margin == 0.09
-    assert "[enrollment]" not in settings.config_path.read_text(encoding="utf-8")
 
 
 def test_settings_exposes_quality_tier_policy(tmp_path) -> None:

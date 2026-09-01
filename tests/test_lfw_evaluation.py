@@ -49,7 +49,7 @@ def test_lfw_evaluation_extracts_templates_and_keeps_unknown_probe_labels(tmp_pa
         face_engine=MarkerFaceEngine(),
     )
 
-    assert result.active_person_ids == ("Alice", "Bob")
+    assert result.gallery_person_ids == ("Alice", "Bob")
     assert result.enrollment_rejections == ()
     assert result.probe_rejections == ()
     assert [record.expected_person_id for record in result.records] == ["Alice", None]

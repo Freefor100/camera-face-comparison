@@ -419,9 +419,7 @@ class MainWindow(QMainWindow):
         return str(item.data(Qt.UserRole))
 
     def _enrollment_message(self, person: Person) -> str:
-        if person.lifecycle == "active":
-            return f"{person.display_name} 已激活，可以参与识别。"
-        return f"{person.display_name} 尚无有效样本，请先添加一张合格图片。"
+        return f"{person.display_name} 已录入，可以参与识别。"
 
     def refresh_people(self) -> None:
         people = self._repository.list_people()
@@ -431,8 +429,7 @@ class MainWindow(QMainWindow):
         self.people_list.clear()
         for person in people:
             sample_count = counts.get(person.id, 0)
-            lifecycle = "已激活" if person.lifecycle == "active" else "草稿"
-            item = QListWidgetItem(f"{person.display_name}\n{sample_count} 张样本 · {lifecycle}")
+            item = QListWidgetItem(f"{person.display_name}\n{sample_count} 张样本")
             item.setData(Qt.UserRole, person.id)
             self.people_list.addItem(item)
         report = verify_library(self._repository, self._settings)

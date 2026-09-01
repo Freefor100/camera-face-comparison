@@ -13,7 +13,6 @@ class Person:
     id: str
     display_name: str
     created_at: datetime
-    lifecycle: str = "active"
 
 
 @dataclass(frozen=True)

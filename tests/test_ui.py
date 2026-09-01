@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from uuid import uuid4
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from camera_face_comparison.camera import CameraDevice
 from camera_face_comparison.config import load_settings
-from camera_face_comparison.repository import FaceRepository
+from camera_face_comparison.repository import FaceRepository, SampleInput
 from camera_face_comparison.ui.main_window import MainWindow
 
 
@@ -40,7 +41,18 @@ def qapplication() -> QApplication:
 def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplication) -> None:
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
-    person = repository.create_person("Alice")
+    person = repository.create_person_with_samples(
+        person_id=str(uuid4()),
+        display_name="Alice",
+        samples=[
+            SampleInput(
+                image_path="faces/alice/sample.jpg",
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                pose="sample_001",
+                quality={"quality_score": 0.9, "tier": "high"},
+            )
+        ],
+    )
     repository.close()
 
     window = MainWindow(
@@ -50,10 +62,10 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
     )
     assert window.camera_combo.count() == 1
     assert window.people_list.count() == 1
-    assert "草稿" in window.people_list.item(0).text()
+    assert "1 张样本" in window.people_list.item(0).text()
     assert window.import_compare_button.text() == "选择本地图片"
     assert window.add_person_from_files_button.text() == "从本地图片新增人员"
-    assert "尚无有效样本" in window._enrollment_message(person)
+    assert window._enrollment_message(person) == "Alice 已录入，可以参与识别。"
     assert not window.compare_button.isEnabled()
 
     window.start_camera()

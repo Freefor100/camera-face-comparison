@@ -105,13 +105,13 @@ def test_recognition_service_returns_name_for_best_library_identity(tmp_path) ->
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
-    alice = _create_active_person(
+    alice = _create_person(
         repository,
         settings,
         "Alice",
         [np.array([1.0, 0.0], dtype=np.float32)],
     )
-    _create_active_person(
+    _create_person(
         repository,
         settings,
         "Bob",
@@ -144,7 +144,7 @@ def test_recognition_uses_stricter_policy_for_medium_quality_probe(tmp_path) -> 
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
-    _create_active_person(
+    _create_person(
         repository,
         settings,
         "Alice",
@@ -174,7 +174,7 @@ def test_recognition_uses_stricter_policy_for_medium_quality_probe(tmp_path) -> 
     assert medium_result.reason == "score_below_threshold"
 
 
-def _create_active_person(
+def _create_person(
     repository: FaceRepository,
     settings,
     name: str,

@@ -105,7 +105,7 @@ def main() -> int:
     report = {
         "protocol": str(protocol_path),
         "evaluation_min_face_size_px": evaluation_settings.min_face_size_px,
-        "active_person_ids": list(run.active_person_ids),
+        "gallery_person_ids": list(run.gallery_person_ids),
         "enrollment_rejections": [asdict(item) for item in run.enrollment_rejections],
         "probe_rejections": [asdict(item) for item in run.probe_rejections],
         "baseline": _metrics_dict(baseline),

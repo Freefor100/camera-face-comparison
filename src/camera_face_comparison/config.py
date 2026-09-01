@@ -79,18 +79,10 @@ def load_settings(data_dir: Path) -> Settings:
         config = tomllib.load(config_file)
     recognition = config["recognition"]
     quality = config["quality"]
-    tier_config = recognition.get("quality_tiers", {})
+    tier_config = recognition["quality_tiers"]
     quality_tiers = {
-        "high": _read_tier(
-            tier_config.get("high", {}),
-            fallback_threshold=float(recognition["match_threshold"]),
-            fallback_margin=float(recognition["min_margin"]),
-        ),
-        "medium": _read_tier(
-            tier_config.get("medium", {}),
-            fallback_threshold=float(recognition["match_threshold"]),
-            fallback_margin=float(recognition["min_margin"]),
-        ),
+        "high": _read_tier(tier_config["high"]),
+        "medium": _read_tier(tier_config["medium"]),
     }
     return Settings(
         data_dir=resolved_data_dir,
@@ -101,16 +93,16 @@ def load_settings(data_dir: Path) -> Settings:
         logs_dir=logs_dir,
         match_threshold=float(recognition["match_threshold"]),
         min_margin=float(recognition["min_margin"]),
-        top_k=int(recognition.get("top_k", 3)),
+        top_k=int(recognition["top_k"]),
         quality_tiers=quality_tiers,
         min_detection_score=float(quality["min_detection_score"]),
         min_face_size_px=int(quality["min_face_size_px"]),
         min_blur_variance=float(quality["min_blur_variance"]),
-        min_brightness=float(quality.get("min_brightness", 35.0)),
-        max_brightness=float(quality.get("max_brightness", 220.0)),
-        min_contrast=float(quality.get("min_contrast", 12.0)),
-        high_quality_score=float(quality.get("high_quality_score", 0.75)),
-        medium_quality_score=float(quality.get("medium_quality_score", 0.55)),
+        min_brightness=float(quality["min_brightness"]),
+        max_brightness=float(quality["max_brightness"]),
+        min_contrast=float(quality["min_contrast"]),
+        high_quality_score=float(quality["high_quality_score"]),
+        medium_quality_score=float(quality["medium_quality_score"]),
     )
 
 
@@ -203,13 +195,8 @@ def _validate_thresholds(match_threshold: float, min_margin: float) -> None:
         raise ValueError("min_margin must be between 0 and 1")
 
 
-def _read_tier(
-    raw_tier: dict[str, object],
-    *,
-    fallback_threshold: float,
-    fallback_margin: float,
-) -> QualityTierPolicy:
+def _read_tier(raw_tier: dict[str, object]) -> QualityTierPolicy:
     return QualityTierPolicy(
-        match_threshold=float(raw_tier.get("match_threshold", fallback_threshold)),
-        min_margin=float(raw_tier.get("min_margin", fallback_margin)),
+        match_threshold=float(raw_tier["match_threshold"]),
+        min_margin=float(raw_tier["min_margin"]),
     )
