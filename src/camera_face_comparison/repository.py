@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,34 +22,40 @@ class SampleInput:
     image_path: str
     embedding: np.ndarray
     pose: str
-    quality: dict[str, float]
+    quality: dict[str, float | str]
+    source_type: str = "camera"
+    image_sha256: str | None = None
 
 
 class FaceRepository:
     """SQLite-backed storage for people, face embeddings, and recognition logs."""
 
     def __init__(self, database_path: Path) -> None:
-        self._connection = sqlite3.connect(database_path)
+        self._connection = sqlite3.connect(database_path, timeout=5.0)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
+        self._connection.execute("PRAGMA journal_mode = WAL")
+        self._connection.execute("PRAGMA busy_timeout = 5000")
         self._initialize_schema()
 
     def close(self) -> None:
         self._connection.close()
 
-    def create_person(self, display_name: str) -> Person:
+    def create_person(self, display_name: str, *, lifecycle: str = "draft") -> Person:
         normalized_name = display_name.strip()
         if not normalized_name:
             raise ValueError("display_name must not be empty")
+        _validate_lifecycle(lifecycle)
         person = Person(
             id=str(uuid4()),
             display_name=normalized_name,
             created_at=_now(),
+            lifecycle=lifecycle,
         )
-        with self._connection:
+        with self._write_transaction():
             self._connection.execute(
-                "INSERT INTO persons (id, display_name, created_at) VALUES (?, ?, ?)",
-                (person.id, person.display_name, person.created_at.isoformat()),
+                "INSERT INTO persons (id, display_name, created_at, lifecycle) VALUES (?, ?, ?, ?)",
+                (person.id, person.display_name, person.created_at.isoformat(), person.lifecycle),
             )
         return person
 
@@ -57,6 +65,7 @@ class FaceRepository:
         person_id: str,
         display_name: str,
         samples: Sequence[SampleInput],
+        min_active_samples: int = 3,
     ) -> Person:
         """Persist a new identity and all of its samples atomically."""
 
@@ -66,7 +75,15 @@ class FaceRepository:
         if not samples:
             raise ValueError("at least one sample is required")
 
-        person = Person(id=person_id, display_name=normalized_name, created_at=_now())
+        if min_active_samples < 1:
+            raise ValueError("min_active_samples must be at least one")
+        lifecycle = "active" if len(samples) >= min_active_samples else "draft"
+        person = Person(
+            id=person_id,
+            display_name=normalized_name,
+            created_at=_now(),
+            lifecycle=lifecycle,
+        )
         prepared_samples = [
             self._make_sample(
                 person_id=person.id,
@@ -74,13 +91,15 @@ class FaceRepository:
                 embedding=sample.embedding,
                 pose=sample.pose,
                 quality=sample.quality,
+                source_type=sample.source_type,
+                image_sha256=sample.image_sha256,
             )
             for sample in samples
         ]
-        with self._connection:
+        with self._write_transaction():
             self._connection.execute(
-                "INSERT INTO persons (id, display_name, created_at) VALUES (?, ?, ?)",
-                (person.id, person.display_name, person.created_at.isoformat()),
+                "INSERT INTO persons (id, display_name, created_at, lifecycle) VALUES (?, ?, ?, ?)",
+                (person.id, person.display_name, person.created_at.isoformat(), person.lifecycle),
             )
             for sample in prepared_samples:
                 self._insert_sample(sample)
@@ -93,7 +112,10 @@ class FaceRepository:
         image_path: str,
         embedding: np.ndarray,
         pose: str,
-        quality: dict[str, float],
+        quality: dict[str, float | str],
+        source_type: str = "camera",
+        image_sha256: str | None = None,
+        min_active_samples: int = 3,
     ) -> FaceSample:
         sample = self._make_sample(
             person_id=person_id,
@@ -101,40 +123,93 @@ class FaceRepository:
             embedding=embedding,
             pose=pose,
             quality=quality,
+            source_type=source_type,
+            image_sha256=image_sha256,
         )
-        with self._connection:
+        if min_active_samples < 1:
+            raise ValueError("min_active_samples must be at least one")
+        with self._write_transaction():
             self._insert_sample(sample)
+            sample_count = self._connection.execute(
+                "SELECT COUNT(*) FROM face_samples WHERE person_id = ?", (person_id,)
+            ).fetchone()[0]
+            if sample_count >= min_active_samples:
+                self._connection.execute(
+                    "UPDATE persons SET lifecycle = 'active' WHERE id = ?", (person_id,)
+                )
         return sample
+
+    def add_samples(
+        self,
+        *,
+        person_id: str,
+        samples: Sequence[SampleInput],
+        min_active_samples: int = 3,
+    ) -> list[FaceSample]:
+        """Append prepared samples in one transaction and activate the person when eligible."""
+
+        if not samples:
+            raise ValueError("at least one sample is required")
+        if min_active_samples < 1:
+            raise ValueError("min_active_samples must be at least one")
+        prepared_samples = [
+            self._make_sample(
+                person_id=person_id,
+                image_path=sample.image_path,
+                embedding=sample.embedding,
+                pose=sample.pose,
+                quality=sample.quality,
+                source_type=sample.source_type,
+                image_sha256=sample.image_sha256,
+            )
+            for sample in samples
+        ]
+        with self._write_transaction():
+            for sample in prepared_samples:
+                self._insert_sample(sample)
+            sample_count = self._connection.execute(
+                "SELECT COUNT(*) FROM face_samples WHERE person_id = ?", (person_id,)
+            ).fetchone()[0]
+            if sample_count >= min_active_samples:
+                self._connection.execute(
+                    "UPDATE persons SET lifecycle = 'active' WHERE id = ?", (person_id,)
+                )
+        return prepared_samples
+
+    def sqlite_integrity_messages(self) -> tuple[str, ...]:
+        """Return SQLite's consistency report without changing stored data."""
+
+        return tuple(
+            str(row[0]) for row in self._connection.execute("PRAGMA integrity_check").fetchall()
+        )
+
+    def foreign_key_violations(self) -> tuple[str, ...]:
+        """Return any dangling references detected by SQLite."""
+
+        return tuple(
+            ":".join(str(value) for value in row)
+            for row in self._connection.execute("PRAGMA foreign_key_check").fetchall()
+        )
 
     def list_people(self) -> list[Person]:
         rows = self._connection.execute(
-            "SELECT id, display_name, created_at FROM persons ORDER BY created_at, display_name"
+            "SELECT id, display_name, created_at, lifecycle FROM persons ORDER BY created_at, display_name"
         ).fetchall()
-        return [
-            Person(
-                id=row["id"],
-                display_name=row["display_name"],
-                created_at=datetime.fromisoformat(row["created_at"]),
-            )
-            for row in rows
-        ]
+        return [self._person_from_row(row) for row in rows]
 
     def get_person(self, person_id: str) -> Person | None:
         row = self._connection.execute(
-            "SELECT id, display_name, created_at FROM persons WHERE id = ?", (person_id,)
+            "SELECT id, display_name, created_at, lifecycle FROM persons WHERE id = ?", (person_id,)
         ).fetchone()
         if row is None:
             return None
-        return Person(
-            id=row["id"],
-            display_name=row["display_name"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-        )
+        return self._person_from_row(row)
 
     def list_samples(self, person_id: str | None = None) -> list[FaceSample]:
         query = """
             SELECT id, person_id, image_path, embedding_blob, embedding_dim,
-                   pose, quality_json, created_at
+                   pose, quality_json, created_at, source_type, image_sha256,
+                   embedding_sha256
             FROM face_samples
         """
         parameters: tuple[str, ...] = ()
@@ -155,7 +230,7 @@ class FaceRepository:
         latency_ms: float,
         reason: str | None,
     ) -> None:
-        with self._connection:
+        with self._write_transaction():
             self._connection.execute(
                 """
                 INSERT INTO recognition_logs (
@@ -182,7 +257,9 @@ class FaceRepository:
                 CREATE TABLE IF NOT EXISTS persons (
                     id TEXT PRIMARY KEY,
                     display_name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    lifecycle TEXT NOT NULL DEFAULT 'draft'
+                        CHECK (lifecycle IN ('draft', 'active'))
                 );
                 CREATE TABLE IF NOT EXISTS face_samples (
                     id TEXT PRIMARY KEY,
@@ -192,7 +269,10 @@ class FaceRepository:
                     embedding_dim INTEGER NOT NULL,
                     pose TEXT NOT NULL,
                     quality_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    source_type TEXT NOT NULL DEFAULT 'camera',
+                    image_sha256 TEXT,
+                    embedding_sha256 TEXT
                 );
                 CREATE TABLE IF NOT EXISTS recognition_logs (
                     id TEXT PRIMARY KEY,
@@ -206,6 +286,13 @@ class FaceRepository:
                 );
                 """
             )
+            self._add_column_if_missing("persons", "lifecycle", "TEXT NOT NULL DEFAULT 'active'")
+            self._add_column_if_missing(
+                "face_samples", "source_type", "TEXT NOT NULL DEFAULT 'camera'"
+            )
+            self._add_column_if_missing("face_samples", "image_sha256", "TEXT")
+            self._add_column_if_missing("face_samples", "embedding_sha256", "TEXT")
+            self._backfill_embedding_hashes()
 
     @staticmethod
     def _make_sample(
@@ -214,7 +301,9 @@ class FaceRepository:
         image_path: str,
         embedding: np.ndarray,
         pose: str,
-        quality: dict[str, float],
+        quality: dict[str, float | str],
+        source_type: str,
+        image_sha256: str | None,
     ) -> FaceSample:
         vector = np.asarray(embedding, dtype=np.float32)
         if vector.ndim != 1 or vector.size == 0:
@@ -227,6 +316,9 @@ class FaceRepository:
             pose=pose,
             quality=quality,
             created_at=_now(),
+            source_type=source_type,
+            image_sha256=image_sha256,
+            embedding_sha256=hashlib.sha256(vector.tobytes()).hexdigest(),
         )
 
     def _insert_sample(self, sample: FaceSample) -> None:
@@ -234,8 +326,9 @@ class FaceRepository:
             """
             INSERT INTO face_samples (
                 id, person_id, image_path, embedding_blob, embedding_dim,
-                pose, quality_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                pose, quality_json, created_at, source_type, image_sha256,
+                embedding_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sample.id,
@@ -246,6 +339,9 @@ class FaceRepository:
                 sample.pose,
                 json.dumps(sample.quality, ensure_ascii=False),
                 sample.created_at.isoformat(),
+                sample.source_type,
+                sample.image_sha256,
+                sample.embedding_sha256,
             ),
         )
 
@@ -262,8 +358,54 @@ class FaceRepository:
             pose=row["pose"],
             quality=json.loads(row["quality_json"]),
             created_at=datetime.fromisoformat(row["created_at"]),
+            source_type=row["source_type"],
+            image_sha256=row["image_sha256"],
+            embedding_sha256=row["embedding_sha256"],
         )
+
+    @staticmethod
+    def _person_from_row(row: sqlite3.Row) -> Person:
+        return Person(
+            id=row["id"],
+            display_name=row["display_name"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            lifecycle=row["lifecycle"],
+        )
+
+    def _add_column_if_missing(self, table: str, column: str, definition: str) -> None:
+        columns = {
+            row["name"]
+            for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self._connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _backfill_embedding_hashes(self) -> None:
+        rows = self._connection.execute(
+            "SELECT id, embedding_blob FROM face_samples WHERE embedding_sha256 IS NULL"
+        ).fetchall()
+        for row in rows:
+            self._connection.execute(
+                "UPDATE face_samples SET embedding_sha256 = ? WHERE id = ?",
+                (hashlib.sha256(row["embedding_blob"]).hexdigest(), row["id"]),
+            )
+
+    @contextmanager
+    def _write_transaction(self) -> Generator[None, None, None]:
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except Exception:
+            self._connection.rollback()
+            raise
+        else:
+            self._connection.commit()
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _validate_lifecycle(lifecycle: str) -> None:
+    if lifecycle not in {"draft", "active"}:
+        raise ValueError("lifecycle must be 'draft' or 'active'")

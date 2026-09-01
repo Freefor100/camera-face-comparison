@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+import numpy as np
+
+from .config import Settings
+
+if TYPE_CHECKING:
+    from .face_engine import FaceObservation
+
+
+SourceType = Literal["camera", "file", "dataset"]
+
+
+@dataclass(frozen=True)
+class ImageInput:
+    """One BGR image entering enrollment, recognition, or evaluation."""
+
+    frame: np.ndarray
+    source_type: SourceType
+    safe_name: str | None
+
+    @classmethod
+    def from_camera(cls, frame: np.ndarray) -> ImageInput:
+        return cls(frame=_validated_copy(frame), source_type="camera", safe_name=None)
+
+    @classmethod
+    def from_file(cls, path: Path, *, source_type: SourceType = "file") -> ImageInput:
+        try:
+            import cv2
+        except ImportError as error:
+            raise RuntimeError("OpenCV is not installed; install the project dependencies first") from error
+        frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError(f"could not decode image: {path.name}")
+        return cls(frame=_validated_copy(frame), source_type=source_type, safe_name=path.name)
+
+
+@dataclass(frozen=True)
+class QualityProfile:
+    """Interpretable face-image quality data used before an identity decision."""
+
+    tier: Literal["high", "medium", "reject"]
+    score: float
+    metrics: dict[str, float]
+    reasons: tuple[str, ...]
+
+
+def assess_quality(
+    frame: np.ndarray,
+    observation: FaceObservation,
+    settings: Settings,
+) -> QualityProfile:
+    """Classify a detected face using reproducible, configuration-backed measurements."""
+
+    crop = _crop_to_bbox(frame, observation.bbox)
+    brightness = float(crop.mean())
+    contrast = float(crop.std())
+    left, top, right, bottom = observation.bbox
+    face_size = min(right - left, bottom - top)
+    metrics = {
+        "detection_score": observation.detection_score,
+        "face_size_px": face_size,
+        "blur_variance": observation.blur_variance,
+        "brightness": brightness,
+        "contrast": contrast,
+    }
+    reasons = _hard_failure_reasons(metrics, settings)
+    if reasons:
+        return QualityProfile("reject", 0.0, metrics, tuple(reasons))
+
+    score = _quality_score(metrics, settings)
+    if score >= settings.high_quality_score:
+        tier: Literal["high", "medium", "reject"] = "high"
+    elif score >= settings.medium_quality_score:
+        tier = "medium"
+    else:
+        tier = "reject"
+        reasons = ["quality_score_below_medium"]
+    return QualityProfile(tier, score, metrics, tuple(reasons))
+
+
+def _validated_copy(frame: np.ndarray) -> np.ndarray:
+    if frame.ndim != 3 or frame.shape[2] != 3:
+        raise ValueError("image must be a three-channel BGR frame")
+    if frame.size == 0:
+        raise ValueError("image must not be empty")
+    return np.ascontiguousarray(frame.copy())
+
+
+def _crop_to_bbox(
+    frame: np.ndarray,
+    bbox: tuple[float, float, float, float],
+) -> np.ndarray:
+    height, width = frame.shape[:2]
+    left = max(0, int(np.floor(bbox[0])))
+    top = max(0, int(np.floor(bbox[1])))
+    right = min(width, int(np.ceil(bbox[2])))
+    bottom = min(height, int(np.ceil(bbox[3])))
+    if right <= left or bottom <= top:
+        return frame
+    return frame[top:bottom, left:right]
+
+
+def _hard_failure_reasons(metrics: dict[str, float], settings: Settings) -> list[str]:
+    reasons: list[str] = []
+    if metrics["detection_score"] < settings.min_detection_score:
+        reasons.append("detection_score_below_minimum")
+    if metrics["face_size_px"] < settings.min_face_size_px:
+        reasons.append("face_size_below_minimum")
+    if metrics["blur_variance"] < settings.min_blur_variance:
+        reasons.append("blur_below_minimum")
+    if metrics["brightness"] < settings.min_brightness:
+        reasons.append("underexposed")
+    if metrics["brightness"] > settings.max_brightness:
+        reasons.append("overexposed")
+    if metrics["contrast"] < settings.min_contrast:
+        reasons.append("contrast_below_minimum")
+    return reasons
+
+
+def _quality_score(metrics: dict[str, float], settings: Settings) -> float:
+    detection = _clamp(
+        (metrics["detection_score"] - settings.min_detection_score)
+        / (1.0 - settings.min_detection_score)
+    )
+    face_size = _clamp(metrics["face_size_px"] / (settings.min_face_size_px * 2))
+    sharpness = _clamp(metrics["blur_variance"] / (settings.min_blur_variance * 2))
+    exposure = _clamp(1.0 - abs(metrics["brightness"] - 127.5) / 127.5)
+    contrast = _clamp(metrics["contrast"] / 64.0)
+    return 0.25 * detection + 0.25 * face_size + 0.25 * sharpness + 0.15 * exposure + 0.10 * contrast
+
+
+def _clamp(value: float) -> float:
+    return max(0.0, min(1.0, value))

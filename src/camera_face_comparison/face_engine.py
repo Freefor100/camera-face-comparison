@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +48,11 @@ class FaceEngine:
             raise RuntimeError(
                 f"offline model is missing at {model_dir}; run scripts/prepare_models.py first"
             )
+        os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+        os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+        matplotlib_cache = settings.logs_dir / "matplotlib"
+        matplotlib_cache.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
         try:
             from insightface.app import FaceAnalysis
         except ImportError as error:
@@ -107,13 +113,16 @@ def validate_single_face(
 
     if not faces:
         raise FaceInputError("no_face_detected")
-    if len(faces) != 1:
+    accepted_detections = [
+        face for face in faces if face.detection_score >= settings.min_detection_score
+    ]
+    if not accepted_detections:
+        raise FaceInputError("detection_score_below_minimum")
+    if len(accepted_detections) != 1:
         raise FaceInputError("multiple_faces")
-    face = faces[0]
+    face = accepted_detections[0]
     left, top, right, bottom = face.bbox
     face_size = min(right - left, bottom - top)
-    if face.detection_score < settings.min_detection_score:
-        raise FaceInputError("detection_score_below_minimum")
     if face_size < settings.min_face_size_px:
         raise FaceInputError("face_size_below_minimum")
     if face.blur_variance < settings.min_blur_variance:

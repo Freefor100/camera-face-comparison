@@ -8,6 +8,7 @@ import pytest
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.enrollment import REQUIRED_POSES, EnrollmentService
 from camera_face_comparison.face_engine import FaceObservation
+from camera_face_comparison.image_input import ImageInput
 from camera_face_comparison.repository import FaceRepository
 
 
@@ -17,6 +18,18 @@ class FakeFaceEngine:
             bbox=(0.0, 0.0, 180.0, 180.0),
             detection_score=0.95,
             embedding=np.array([0.2, 0.3, 0.4], dtype=np.float32),
+            blur_variance=150.0,
+            landmarks=None,
+        )
+
+
+class DiverseFakeFaceEngine:
+    def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+        marker = float(frame[0, 0, 0])
+        return FaceObservation(
+            bbox=(0.0, 0.0, 180.0, 180.0),
+            detection_score=0.95,
+            embedding=np.array([marker + 1.0, 3.0, 7.0], dtype=np.float32),
             blur_variance=150.0,
             landmarks=None,
         )
@@ -108,3 +121,68 @@ def test_existing_person_can_receive_an_extra_valid_sample(tmp_path) -> None:
     with pytest.raises(ValueError, match="person does not exist"):
         service.append_sample("not-a-person", "front", frame)
     repository.close()
+
+
+def test_three_valid_local_inputs_activate_a_person_without_pose_steps(tmp_path) -> None:
+    """Local images can create an active person without a prescribed capture sequence."""
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    service = EnrollmentService(
+        repository=repository,
+        settings=settings,
+        face_engine=DiverseFakeFaceEngine(),
+        image_saver=_save_image,
+    )
+    inputs = []
+    for value in (80, 120, 180):
+        frame = np.full((240, 320, 3), value, dtype=np.uint8)
+        frame[:, ::2] = value + 30
+        inputs.append(ImageInput.from_camera(frame))
+
+    person = service.create_from_inputs("Alice", inputs)
+
+    restored = repository.get_person(person.id)
+    samples = repository.list_samples(person.id)
+    assert restored is not None
+    assert restored.lifecycle == "active"
+    assert len(samples) == 3
+    assert all(sample.source_type == "camera" for sample in samples)
+    assert all(sample.image_sha256 for sample in samples)
+    assert all((settings.data_dir / sample.image_path).is_file() for sample in samples)
+    repository.close()
+
+
+def test_local_inputs_can_activate_an_existing_draft_person(tmp_path) -> None:
+    """Imported images must expand a draft identity without reopening a pose-by-pose workflow."""
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    service = EnrollmentService(
+        repository=repository,
+        settings=settings,
+        face_engine=DiverseFakeFaceEngine(),
+        image_saver=_save_image,
+    )
+    person = service.create_from_inputs("Alice", [ImageInput.from_camera(_textured_frame(80))])
+
+    service.append_from_inputs(
+        person.id,
+        [
+            ImageInput.from_camera(_textured_frame(120)),
+            ImageInput.from_camera(_textured_frame(180)),
+        ],
+    )
+
+    restored = repository.get_person(person.id)
+    samples = repository.list_samples(person.id)
+    assert restored is not None
+    assert restored.lifecycle == "active"
+    assert len(samples) == 3
+    repository.close()
+
+
+def _textured_frame(value: int) -> np.ndarray:
+    frame = np.full((240, 320, 3), value, dtype=np.uint8)
+    frame[:, ::2] = value + 30
+    return frame

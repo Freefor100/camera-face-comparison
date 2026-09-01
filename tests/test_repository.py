@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 
 from camera_face_comparison.repository import FaceRepository
@@ -32,3 +34,37 @@ def test_repository_persists_person_and_embedding_across_reopen(tmp_path) -> Non
     assert samples[0].person_id == person.id
     assert samples[0].pose == "front"
     assert np.allclose(samples[0].embedding, [0.1, 0.2, 0.3])
+
+
+def test_repository_tracks_lifecycle_source_and_hashes(tmp_path) -> None:
+    """Stored template provenance and consistency metadata survive a normal reopen."""
+
+    database_path = tmp_path / "face_library.sqlite"
+    repository = FaceRepository(database_path)
+    person = repository.create_person("Alice")
+    embedding = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    sample = repository.add_sample(
+        person_id=person.id,
+        image_path="faces/alice/imported.jpg",
+        embedding=embedding,
+        pose="imported",
+        quality={"tier": "high"},
+        source_type="file",
+        image_sha256="a" * 64,
+    )
+    journal_mode = repository._connection.execute("PRAGMA journal_mode").fetchone()[0]
+    repository.close()
+
+    reopened = FaceRepository(database_path)
+    restored_person = reopened.get_person(person.id)
+    restored_sample = reopened.list_samples(person.id)[0]
+    reopened.close()
+
+    assert person.lifecycle == "draft"
+    assert restored_person is not None
+    assert restored_person.lifecycle == "draft"
+    assert restored_sample.source_type == "file"
+    assert restored_sample.image_sha256 == "a" * 64
+    assert restored_sample.embedding_sha256 == hashlib.sha256(embedding.tobytes()).hexdigest()
+    assert sample.embedding_sha256 == restored_sample.embedding_sha256
+    assert journal_mode == "wal"

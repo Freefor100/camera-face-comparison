@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from camera_face_comparison.calibration import CalibrationRecord, calibrate_thresholds
-from camera_face_comparison.config import load_settings, write_recognition_thresholds
+from camera_face_comparison.config import load_settings, write_quality_tier_thresholds
 
 
 def _values(start: int, stop: int) -> list[float]:
@@ -44,6 +44,12 @@ def main() -> int:
         default=PROJECT_ROOT / "data" / "calibration_scores.jsonl",
         help="JSONL rows: expected_person_id (string/null), person_scores (object)",
     )
+    parser.add_argument(
+        "--quality-tier",
+        choices=("high", "medium"),
+        default="high",
+        help="probe-quality policy to calibrate; run once per held-out quality subset",
+    )
     args = parser.parse_args()
     if not args.scores.is_file():
         print(f"Calibration input does not exist: {args.scores}", file=sys.stderr)
@@ -55,8 +61,9 @@ def main() -> int:
         margin_candidates=_values(0, 20),
     )
     settings = load_settings(args.data_dir)
-    write_recognition_thresholds(
+    write_quality_tier_thresholds(
         settings,
+        tier=args.quality_tier,
         match_threshold=result.match_threshold,
         min_margin=result.min_margin,
     )
@@ -65,6 +72,7 @@ def main() -> int:
             {
                 "match_threshold": result.match_threshold,
                 "min_margin": result.min_margin,
+                "quality_tier": args.quality_tier,
                 "unknown_false_accepts": result.unknown_false_accepts,
                 "known_correct": result.known_correct,
             },

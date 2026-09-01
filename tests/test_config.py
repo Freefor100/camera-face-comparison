@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from camera_face_comparison.config import load_settings, write_recognition_thresholds
+from camera_face_comparison.config import (
+    load_settings,
+    write_quality_tier_thresholds,
+    write_recognition_thresholds,
+)
 
 
 def test_load_settings_creates_portable_data_layout(tmp_path) -> None:
@@ -26,3 +30,36 @@ def test_write_recognition_thresholds_persists_calibration_result(tmp_path) -> N
 
     assert reloaded.match_threshold == 0.61
     assert reloaded.min_margin == 0.09
+
+
+def test_settings_exposes_active_sample_and_quality_tier_policy(tmp_path) -> None:
+    """Open-set behavior must read activation and tier policy from portable config."""
+
+    settings = load_settings(tmp_path)
+
+    assert settings.min_active_samples == 3
+    assert set(settings.quality_tiers) == {"high", "medium"}
+    assert settings.quality_tiers["high"].match_threshold > 0
+    assert (
+        settings.quality_tiers["medium"].match_threshold
+        >= settings.quality_tiers["high"].match_threshold
+    )
+
+
+def test_write_quality_tier_thresholds_keeps_the_other_probe_policy(tmp_path) -> None:
+    """Medium-quality calibration must not silently overwrite the high-quality policy."""
+
+    settings = load_settings(tmp_path)
+    high_before = settings.quality_tiers["high"]
+
+    write_quality_tier_thresholds(
+        settings,
+        tier="medium",
+        match_threshold=0.63,
+        min_margin=0.11,
+    )
+
+    reloaded = load_settings(tmp_path)
+    assert reloaded.quality_tiers["high"] == high_before
+    assert reloaded.quality_tiers["medium"].match_threshold == 0.63
+    assert reloaded.quality_tiers["medium"].min_margin == 0.11

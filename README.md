@@ -1,145 +1,142 @@
 # 摄像头人脸比对系统
 
-基于外置摄像头的离线人脸比对课程设计项目。程序以 Python 源码形式跨平台运行：实时预览摄像头画面，采集标准人脸库，识别已录入人员并拒识未知人员。
+离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序可从外置摄像头或本地图片读取人脸，在本地标准库中识别已录入人员；证据不够时输出“未知人员”，不会强行猜测姓名。
+
+设计逻辑、数据边界、完整性校验和真实 LFW pilot 结果见 [design.md](design.md)。
 
 ## 功能
 
-- 扫描并选择外置摄像头；Linux 使用 V4L2、Windows 优先 DirectShow、macOS 优先 AVFoundation，均通过 OpenCV 设备索引访问。
-- 实时预览，点击“抓拍并比对”后显示人脸框、姓名/未知人员、相似度和处理耗时。
-- 标准库至少支持三名人员；新增人员必须完成正脸、左转、右转、抬头、低头五步采样。
-- SQLite 保存人员、样本元数据、特征向量和识别日志；样本图片独立存放，重启后仍可使用。
-- 使用 InsightFace `buffalo_l` 的本地模型和 ONNX Runtime CPU 推理；演示时不依赖网络。
-- 使用 Top-2 样本平均余弦相似度、匹配阈值和第一/第二候选差距判定，降低单样本偶然高分和未知人员误认。
+- PySide6 桌面界面：摄像头预览、抓拍识别和选择本地图片识别。
+- OpenCV 摄像头适配：Linux 优先 V4L2，Windows 优先 DirectShow，macOS 优先 AVFoundation；界面通过设备索引扫描，不把 `/dev/video0` 写死。
+- InsightFace `buffalo_l` 本地 ONNX 模型 + ONNX Runtime CPU 推理；日常演示不需要网络。
+- 开放集 1:N 比对：归一化向量余弦相似度、每人 Top-K 质量加权聚合、质量分级阈值和第一/第二候选差距拒识。
+- 人员库动态扩容：从本地多选图片或当前摄像头画面新增、追加样本；没有固定动作或固定顺序要求。
+- 草稿状态：人员达到默认 3 张合格样本才变为 `active` 并参与识别，避免单张偶然样本直接入库。
+- 数据完整性：样本图和向量 BLOB 分别保存 SHA-256；发现文件替换、缺失或向量改写时停止信任该库。
+- 可复现实验：可下载 LFW，生成固定开放集协议，导出 FPIR、FNIR、Rank-1、拒识率和端到端耗时。
 
-## 运行环境
+## 安装
 
-- Python 3.11（推荐；项目代码兼容 Python 3.11–3.13）。
-- 64 位 Windows、Linux 或 macOS。
-- 一台可被系统识别的外置 UVC 摄像头。
-- 首次准备模型时需要网络；正常演示无需联网。
-
-## 安装与离线模型准备
-
-在项目根目录执行：
+推荐 Python 3.11–3.13，Windows、Linux、macOS 均可运行。
 
 ```bash
 python3.11 -m venv .venv
-```
-
-Windows PowerShell：
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Linux/macOS：
-
-```bash
-source .venv/bin/activate
-```
-
-安装项目与开发依赖：
-
-```bash
+source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-在有网络的机器上下载模型到本地 `data/models/`：
+在能联网的开发机器准备一次模型；它会下载到可搬运的 `data/models/`：
 
 ```bash
 python scripts/prepare_models.py --data-dir ./data
 ```
 
-将整个 `data/` 文件夹与源码一起复制到演示机器；不要在演示机器首次下载模型。
+演示机器只需复制源码和整个 `data/` 目录。模型加载前会关闭 Albumentations 的在线版本检查，因此正常启动不会因网络不可用而失败。
 
-## 启动
+## 启动与操作
 
 ```bash
 python -m camera_face_comparison --data-dir ./data
 ```
 
-应用启动后：
+### 实时比对
 
-1. 在“实时比对”页刷新并选择摄像头，启动预览。
-2. 在“标准人脸库”页新增至少三名人员；每人完成五种姿态采样。
-3. 如需扩充某位已有人员，在“标准人脸库”选中该人员，点击“为选中人员追加样本”。
-4. 回到实时比对页，单击“抓拍并比对”。
-5. 已录入人员会显示姓名；分数不足或候选差距不足时显示“未知人员”。
+1. 点击“刷新设备”，选择外置摄像头，启动预览。
+2. 点击“抓拍并比对”，或点击“选择本地图片”。两种输入走同一套识别规则。
+3. 结果显示姓名、相似度、处理耗时；分数或候选差距不够时显示未知人员和原因。
+4. 点击“停止预览”会清空画面与最后一帧，避免误把旧画面当作实时视频。
 
-## 数据目录
+### 标准人脸库
 
-`--data-dir` 指定所有本地数据的位置：
+- “从本地图片新增人员”：输入姓名后可多选图片。每张都必须检测到单张、质量合格的人脸。
+- “从当前画面新增人员”：把当前画面作为一张样本创建人员；样本不足时显示草稿状态。
+- “为选中人员导入图片”或“添加当前画面”：为已有人员追加任意数量的样本。
+- 人员达到 `data/config.toml` 中的 `min_active_samples`（默认 3）后自动激活。姿态提示可以作为采集建议，但程序不要求五个固定动作。
+
+## 识别规则
+
+待测图片不会与标准库原图做像素级比较。系统把单张合格人脸转为 L2 归一化特征向量 `q`，与每张参考样本 `e` 计算余弦相似度：
+
+```text
+sim(q, e) = q · e
+```
+
+每个人先取最好的 Top-K 样本（默认 3），再按样本入库质量加权。只有同时满足下列条件才输出姓名：
+
+```text
+最佳人员分数 >= 当前探针质量等级的 match_threshold
+最佳人员分数 - 第二人员分数 >= 当前探针质量等级的 min_margin
+```
+
+图片过暗、过曝、模糊、对比度低、脸太小、无人脸或可信人脸超过一张，会在比对前拒绝。高质量与中等质量探针使用不同阈值；阈值位于 `data/config.toml`，不是写死在算法中。
+
+## 数据目录与完整性
 
 ```text
 data/
-├─ config.toml             # 阈值和样本质量规则
-├─ face_library.sqlite     # 人员、特征向量与识别日志
-├─ models/buffalo_l/       # 离线模型
-├─ faces/<person-id>/      # 标准库样本图片
-└─ logs/                   # 预留的导出目录
+├─ config.toml                    # 阈值、质量门槛、激活样本数
+├─ face_library.sqlite            # 人员、向量、质量元数据、识别日志
+├─ faces/<person-id>/             # 已入库样本图片
+├─ models/buffalo_l/              # 离线 ONNX 模型
+├─ datasets/                      # LFW 归档、图片与协议（可选）
+└─ logs/                          # LFW 评分记录和实验报告
 ```
 
-`data/` 已被 Git 忽略，因为它包含个人脸部数据和模型文件。请只在获得参与者同意的前提下采集并妥善保管这些数据。
+SQLite 开启外键、WAL 和短写事务。每张已入库图片和每个 `float32` 向量 BLOB 都有独立 SHA-256。检查的是标准库参考资料，不会给摄像头当前帧做哈希；目的是发现样本图被外部覆盖、图片缺失或数据库向量被改写。它不是防御拥有完整磁盘控制权的攻击者。
 
-## 人脸比对规则
+`data/` 被 Git 忽略，里面可能含有人脸图片、模型和实验数据。
 
-待测图像不会和数据库原图做像素级比较。系统会先检测和校验单张人脸，再把人脸转成归一化特征向量。待测向量会与标准库全部样本向量计算余弦相似度；每名人员取最高两张样本分数的均值。只有同时满足以下条件才输出姓名：
+## LFW 真实评测
 
-```text
-最佳人员分数 >= match_threshold
-最佳人员分数 - 第二人员分数 >= min_margin
-```
-
-否则输出“未知人员”。默认阈值仅用于首次调试，最终应使用测试数据校准。
-
-## 优化实验与阈值校准
-
-保留基础版和优化版对同一测试集的结果。建议测试三名已知人员的正常光照、侧脸、暗光和眼镜/遮挡场景，并加入至少三名未知人员。
-
-将每次测试的人员级分数保存为 JSONL，例如：
-
-```json
-{"expected_person_id":"<alice-id>","person_scores":{"<alice-id>":0.72,"<bob-id>":0.45}}
-{"expected_person_id":null,"person_scores":{"<alice-id>":0.52,"<bob-id>":0.49}}
-```
-
-然后运行：
+下载和评测都需要显式运行，应用本身不会自动下载数据。
 
 ```bash
-python scripts/calibrate_thresholds.py \
-  --data-dir ./data \
-  --scores ./data/calibration_scores.jsonl
+python scripts/prepare_lfw.py --data-dir ./data --download \
+  --known-identities 3 --unknown-identities 3 \
+  --enrollment-per-identity 5 --probes-per-identity 2
+
+python scripts/evaluate_lfw.py --data-dir ./data --min-face-size 80
 ```
 
-脚本优先选择未知人员误认更少的阈值组合，再提高已知人员正确识别数，并将结果写入 `data/config.toml`。
+第一条命令下载 LFW funneled 归档，支持断点续传，并以 scikit-learn 公布的 SHA-256 校验后再解压。它生成 `data/datasets/lfw_open_set_protocol.json`：已知人员的模板图和探针图分离，未知人员从不进入图库。
 
-使用同一份测试记录比较优化前后效果（该记录不含人脸图片，可单独保存）：
+第二条命令使用本地模型逐张提取真实向量，输出：
 
-```json
-{"expected_person_id":"<alice-id>","sample_scores":{"<alice-id>":[0.72,0.70],"<bob-id>":[0.45,0.42]},"latency_ms":118}
-{"expected_person_id":null,"sample_scores":{"<alice-id>":[0.52,0.30],"<bob-id>":[0.49,0.27]},"latency_ms":123}
+- `data/logs/lfw_scores.jsonl`：可回放的逐探针分数、样本质量和耗时；
+- `data/logs/lfw_evaluation_report.json`：基础版与优化版的 FPIR、FNIR、Rank-1、未知拒识率、误识数和平均耗时。
+
+`--min-face-size 80` 只适用于 250×250 的 LFW 评测图，不会修改摄像头运行的 `config.toml`。当前仓库已跑过一次小样本真实 pilot；结果、拒绝图片数量和限制写在 [design.md](design.md#7-开源数据集实验)。小样本上没有观察到优化优于基线的差异，不能据此宣称提升。
+
+若需要校准阈值，应从最终评测集之外的留出集导出 JSONL，再分别校准高质量和中等质量探针：
+
+```bash
+python scripts/calibrate_thresholds.py --data-dir ./data \
+  --scores ./data/calibration_high.jsonl --quality-tier high
+
+python scripts/calibrate_thresholds.py --data-dir ./data \
+  --scores ./data/calibration_medium.jsonl --quality-tier medium
 ```
+
+使用同一份已保存评分记录重复生成基线/优化版对比：
 
 ```bash
 python scripts/evaluate_experiment.py \
-  --data-dir ./data \
-  --scores ./data/experiment_scores.jsonl
+  --data-dir ./data --scores ./data/logs/lfw_scores.jsonl
 ```
-
-它会将基础版（单样本最高分）与优化版（Top-2 均值和候选差距）的已知人员正确数、未知人员拒识率、误识次数和平均耗时写入 `data/logs/optimization_report.json`，可直接作为课程设计的优化过程证据。
 
 ## 测试
 
 ```bash
-python -m pytest
+QT_QPA_PLATFORM=offscreen python -m pytest -q
+python -m ruff check .
 ```
 
-自动化测试不依赖真实摄像头、网络、模型文件或个人照片。真实摄像头、离线模型加载和界面流程需要按上面的手工步骤验收。
+自动化测试不访问真实摄像头、网络、个人照片或本地模型。LFW 脚本和摄像头流程需要按上面的真实命令手工验收。
 
-## 常见问题
+## 摄像头故障排查
 
-- **Linux 未发现摄像头：** 检查 `ls /dev/video*` 是否列出设备，并确认当前用户拥有视频设备访问权限；应用仍以设备索引扫描，而不是把 `/dev/video0` 写死。
-- **Windows 未发现摄像头：** 检查系统隐私设置是否允许桌面应用访问摄像头，并关闭正在占用摄像头的软件。
-- **macOS 无法打开摄像头：** 在系统“隐私与安全性”中授予终端或 Python 摄像头权限。
-- **启动提示模型缺失：** 在有网络的开发机器执行 `prepare_models.py`，再复制 `data/models/`。
+- Linux：`ls /dev/video*` 查看系统识别的设备，并确认当前用户有视频设备权限。程序仍通过 OpenCV 索引打开设备。
+- Windows：在系统隐私设置中允许桌面应用访问摄像头，关闭占用摄像头的软件。
+- macOS：在“隐私与安全性”中授予终端或 Python 摄像头权限。
+- 模型缺失：在有网络的机器运行 `prepare_models.py`，然后复制 `data/models/`。

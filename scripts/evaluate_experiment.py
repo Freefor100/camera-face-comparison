@@ -24,6 +24,19 @@ def _load_records(path: Path) -> list[ExperimentRecord]:
                 str(person_id): [float(score) for score in scores]
                 for person_id, scores in payload["sample_scores"].items()
             }
+            raw_quality_scores = payload.get("sample_quality_scores")
+            sample_quality_scores = (
+                None
+                if raw_quality_scores is None
+                else {
+                    str(person_id): [float(score) for score in scores]
+                    for person_id, scores in raw_quality_scores.items()
+                }
+            )
+            raw_probe_quality_tier = payload.get("probe_quality_tier")
+            probe_quality_tier = (
+                None if raw_probe_quality_tier is None else str(raw_probe_quality_tier)
+            )
             latency_ms = float(payload["latency_ms"])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ValueError(f"invalid experiment record at line {line_number}") from error
@@ -32,6 +45,8 @@ def _load_records(path: Path) -> list[ExperimentRecord]:
                 expected_person_id=None if expected is None else str(expected),
                 sample_scores=sample_scores,
                 latency_ms=latency_ms,
+                sample_quality_scores=sample_quality_scores,
+                probe_quality_tier=probe_quality_tier,
             )
         )
     return records
@@ -46,6 +61,9 @@ def _metrics_to_dict(metrics) -> dict[str, float | int | None]:
         "unknown_total": metrics.unknown_total,
         "unknown_rejected": metrics.unknown_rejected,
         "unknown_rejection_rate": metrics.unknown_rejection_rate,
+        "false_positive_identification_rate": metrics.false_positive_identification_rate,
+        "false_negative_identification_rate": metrics.false_negative_identification_rate,
+        "rank_one_identification_rate": metrics.rank_one_identification_rate,
         "misidentifications": metrics.misidentifications,
         "average_latency_ms": metrics.average_latency_ms,
     }
@@ -72,11 +90,21 @@ def main() -> int:
         records=records,
         match_threshold=settings.match_threshold,
         min_margin=settings.min_margin,
+        top_k=settings.top_k,
+        quality_tiers=settings.quality_tiers,
     )
     report = {
         "parameters": {
             "match_threshold": settings.match_threshold,
             "min_margin": settings.min_margin,
+            "top_k": settings.top_k,
+            "quality_tiers": {
+                name: {
+                    "match_threshold": policy.match_threshold,
+                    "min_margin": policy.min_margin,
+                }
+                for name, policy in settings.quality_tiers.items()
+            },
         },
         "baseline": _metrics_to_dict(baseline),
         "optimized": _metrics_to_dict(optimized),

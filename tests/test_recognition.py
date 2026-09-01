@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
+import pytest
 
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.face_engine import FaceObservation
+from camera_face_comparison.image_input import ImageInput
 from camera_face_comparison.recognition import (
     RecognitionService,
     aggregate_person_scores,
+    aggregate_quality_weighted_scores,
     decide_match,
     recognize_embedding,
 )
-from camera_face_comparison.repository import FaceRepository
+from camera_face_comparison.repository import FaceRepository, SampleInput
 
 
 def test_aggregate_person_scores_uses_mean_of_two_best_samples() -> None:
@@ -25,6 +30,22 @@ def test_aggregate_person_scores_uses_mean_of_two_best_samples() -> None:
         "alice": 0.835,
         "bob": 0.825,
     }
+
+
+def test_quality_weighted_aggregation_downweights_a_poor_reference_image() -> None:
+    """A very similar but low-quality reference must not dominate a reliable person."""
+
+    aggregated = aggregate_quality_weighted_scores(
+        {
+            "alice": [(0.99, 0.10), (0.70, 0.95)],
+            "bob": [(0.84, 0.95), (0.84, 0.95)],
+        },
+        top_k=2,
+    )
+
+    assert aggregated["alice"] == pytest.approx(0.8046, abs=0.0001)
+    assert aggregated["bob"] == pytest.approx(0.84)
+    assert aggregated["bob"] > aggregated["alice"]
 
 
 def test_decide_match_returns_best_person_when_score_and_gap_pass() -> None:
@@ -84,28 +105,17 @@ def test_recognition_service_returns_name_for_best_library_identity(tmp_path) ->
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
-    alice = repository.create_person("Alice")
-    bob = repository.create_person("Bob")
-    repository.add_sample(
-        person_id=alice.id,
-        image_path="faces/alice/front.jpg",
-        embedding=np.array([1.0, 0.0], dtype=np.float32),
-        pose="front",
-        quality={},
+    alice = _create_active_person(
+        repository,
+        settings,
+        "Alice",
+        [np.array([1.0, 0.0], dtype=np.float32)] * 3,
     )
-    repository.add_sample(
-        person_id=alice.id,
-        image_path="faces/alice/left.jpg",
-        embedding=np.array([0.99, 0.1], dtype=np.float32),
-        pose="left",
-        quality={},
-    )
-    repository.add_sample(
-        person_id=bob.id,
-        image_path="faces/bob/front.jpg",
-        embedding=np.array([0.2, 0.98], dtype=np.float32),
-        pose="front",
-        quality={},
+    _create_active_person(
+        repository,
+        settings,
+        "Bob",
+        [np.array([0.2, 0.98], dtype=np.float32)] * 3,
     )
 
     class ProbeEngine:
@@ -119,7 +129,7 @@ def test_recognition_service_returns_name_for_best_library_identity(tmp_path) ->
             )
 
     result = RecognitionService(repository, settings, ProbeEngine()).compare(
-        np.zeros((100, 100, 3), dtype=np.uint8)
+        _textured_frame(120)
     )
     repository.close()
 
@@ -127,3 +137,75 @@ def test_recognition_service_returns_name_for_best_library_identity(tmp_path) ->
     assert result.display_name == "Alice"
     assert result.person_id == alice.id
     assert result.bbox == (0.0, 0.0, 160.0, 160.0)
+
+
+def test_recognition_uses_stricter_policy_for_medium_quality_probe(tmp_path) -> None:
+    """The same similarity is accepted for a high-quality probe but rejected for medium quality."""
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    _create_active_person(
+        repository,
+        settings,
+        "Alice",
+        [np.array([1.0, 0.0], dtype=np.float32)] * 3,
+    )
+
+    class ProbeEngine:
+        def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+            return FaceObservation(
+                bbox=(0.0, 0.0, 180.0, 180.0),
+                detection_score=0.95,
+                embedding=np.array([0.55, 0.83516465], dtype=np.float32),
+                blur_variance=150.0,
+                landmarks=None,
+            )
+
+    service = RecognitionService(repository, settings, ProbeEngine())
+    high_quality = _textured_frame(120)
+    medium_quality = _textured_frame(50)
+
+    high_result = service.compare_input(ImageInput.from_camera(high_quality))
+    medium_result = service.compare_input(ImageInput.from_camera(medium_quality))
+    repository.close()
+
+    assert high_result.status == "matched"
+    assert medium_result.status == "unknown"
+    assert medium_result.reason == "score_below_threshold"
+
+
+def _create_active_person(
+    repository: FaceRepository,
+    settings,
+    name: str,
+    embeddings: list[np.ndarray],
+):
+    person_id = name.lower()
+    samples = []
+    for index, embedding in enumerate(embeddings, start=1):
+        relative_path = f"faces/{person_id}/sample_{index:03d}.jpg"
+        image_path = settings.data_dir / relative_path
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(f"{name}-{index}".encode())
+        samples.append(
+            SampleInput(
+                image_path=relative_path,
+                embedding=embedding,
+                pose=f"sample_{index:03d}",
+                quality={"quality_score": 0.95, "tier": "high"},
+                source_type="file",
+                image_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
+            )
+        )
+    return repository.create_person_with_samples(
+        person_id=person_id,
+        display_name=name,
+        samples=samples,
+        min_active_samples=3,
+    )
+
+
+def _textured_frame(base_value: int) -> np.ndarray:
+    frame = np.full((240, 320, 3), base_value, dtype=np.uint8)
+    frame[:, ::2] = base_value + 30
+    return frame

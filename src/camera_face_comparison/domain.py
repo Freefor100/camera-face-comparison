@@ -13,6 +13,7 @@ class Person:
     id: str
     display_name: str
     created_at: datetime
+    lifecycle: str = "active"
 
 
 @dataclass(frozen=True)
@@ -24,8 +25,11 @@ class FaceSample:
     image_path: str
     embedding: np.ndarray
     pose: str
-    quality: dict[str, float]
+    quality: dict[str, float | str]
     created_at: datetime
+    source_type: str = "camera"
+    image_sha256: str | None = None
+    embedding_sha256: str | None = None
 
 
 @dataclass(frozen=True)
