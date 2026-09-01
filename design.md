@@ -196,7 +196,7 @@ SQLite 开启外键、WAL、5 秒 busy timeout 和 `BEGIN IMMEDIATE` 写事务�
 
 评测构建 Gallery 时，只要某个身份至少有 1 张图片成功提取 embedding，该身份就会进入 Gallery；其余失败图片会单独记录为 enrollment rejection。协议生成器可以为每个身份分配多张图片，但这不是激活门槛。
 
-本机已运行的小型 pilot 包含 3 个入库身份和 3 个未知身份。入库阶段有 3 张图片被拒绝，探针阶段有 5 张图片被拒绝，最终只有 4 张 Known Probe 和 3 张 Unknown Probe 进入打分。两种方法在这 7 张图片上都得到已知 4/4、未知 3/3。
+本机已运行的小型 pilot 包含 3 个入库身份和 3 个未知身份。入库阶段有 3 张图片被拒绝，探针阶段有 5 张图片被拒绝，最终只有 4 张 Known Probe 和 3 张 Unknown Probe 进入打分。Max 基线在这 7 张图片上得到已知 4/4、未知 3/3；当前 Top-K 质量加权策略得到已知 3/4、未知 3/3。
 
 当前评测报告把 `probe_rejections` 单独列出，但 FPIR、FNIR 和 Rank-1 的分母只包含成功进入打分的 Probe。因此这些结果是“成功提取 embedding 后的条件识别结果”，不是包含检测和质量失败的端到端结果。
 
