@@ -112,6 +112,8 @@ S1 < match_threshold
 
 仓库现有 `data/config.toml` 是较早生成的配置，没有质量分层字段，因此当前本机运行时 high 和 medium 都回退到全局 `0.45/0.05`。这些值是初始运行参数，不是公开数据集标定结果。
 
+旧配置中如果仍有 `[enrollment]` 或 `min_active_samples`，当前加载器会忽略这些字段；它们不再影响人员是否参与识别。
+
 ## 6. 当前质量规则
 
 硬性质量检查使用以下配置：
@@ -136,7 +138,7 @@ S1 < match_threshold
 
 ## 7. 当前入库与标准库存储
 
-当前灵活入库流程支持本地图片和摄像头帧，不要求五个固定动作：
+当前入库流程支持本地图片和摄像头帧，不要求固定动作、姿态或顺序：
 
 ```text
 一组输入图片
@@ -150,9 +152,9 @@ S1 < match_threshold
 一个 SQLite 事务写入人员和所有样本
 ```
 
-创建人员时至少要有一张合格图片。样本数少于 `min_active_samples` 时人员状态为 `draft`，不参与识别；达到默认 3 张后变为 `active`。为已有人员追加样本后，状态会在同一个写事务中更新。
+UI 创建人员时至少要有一张合格图片，人员和首张样本在同一次操作中写入，并立即标记为 `active`。同一人员可以继续追加任意数量的合格样本，追加过程不改变已激活状态。
 
-旧的五姿态 `EnrollmentSession` 仍保留在代码中，要求 `front/left/right/up/down` 全部采集后提交；当前灵活入库接口和本地图片导入不使用这个限制。
+`draft` 状态只用于兼容没有样本的底层人员记录和历史数据库。Repository 启动时会把“已有至少一张样本但仍是 `draft`”的旧记录迁移为 `active`。当前代码中没有固定姿态录入会话或五步录入入口。
 
 SQLite 当前包含：
 
@@ -194,6 +196,8 @@ SQLite 开启外键、WAL、5 秒 busy timeout 和 `BEGIN IMMEDIATE` 写事务�
 - baseline：每个人的最高样本分数，使用全局阈值且不使用 margin；
 - optimized：当前 Top-K 质量加权分数，使用质量分层阈值和 margin。
 
+评测构建 Gallery 时，只要某个身份至少有 1 张图片成功提取 embedding，该身份就会进入 Gallery；其余失败图片会单独记录为 enrollment rejection。协议生成器可以为每个身份分配多张图片，但这不是激活门槛。
+
 本机已运行的小型 pilot 包含 3 个入库身份和 3 个未知身份。入库阶段有 3 张图片被拒绝，探针阶段有 5 张图片被拒绝，最终只有 4 张 Known Probe 和 3 张 Unknown Probe 进入打分。两种方法在这 7 张图片上都得到已知 4/4、未知 3/3。
 
 当前评测报告把 `probe_rejections` 单独列出，但 FPIR、FNIR 和 Rank-1 的分母只包含成功进入打分的 Probe。因此这些结果是“成功提取 embedding 后的条件识别结果”，不是包含检测和质量失败的端到端结果。
@@ -210,17 +214,3 @@ SQLite 开启外键、WAL、5 秒 busy timeout 和 `BEGIN IMMEDIATE` 写事务�
 4. 若仍相同，选择更大的 margin。
 
 脚本可以分别把结果写入 high 或 medium 配置，但当前仓库没有一份独立 Calibration 数据集产生的正式校准结果。
-
-## 12. 当前实现边界
-
-以下能力当前没有实现：
-
-- 固定的 Mean Identity Prototype；
-- 质量加权 Identity Prototype；
-- 身份模板持久化或内存索引；
-- Calibration/Test identity-disjoint 数据协议；
-- 目标 FPIR operating point 阈值选择；
-- FTE、FTA 和端到端识别指标；
-- 多原型聚类和专用 FIQA 模型。
-
-这些条目只用于界定当前版本，不代表已经完成或已经验证。

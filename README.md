@@ -1,38 +1,129 @@
 # 摄像头人脸比对系统
 
-离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序可从外置摄像头或本地图片读取人脸，在本地标准库中识别已录入人员；证据不够时输出“未知人员”，不会强行猜测姓名。
+离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序从外置摄像头或本地图片读取人脸，在本地标准库中检索已录入人员；证据不足时输出“未知人员”，不会强行给出姓名。
 
-设计逻辑、数据边界、完整性校验和真实 LFW pilot 结果见 [design.md](design.md)。
+当前版本先保证主链路可运行，再按阶段完成算法比较、数据标定、鲁棒性优化和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [docs/任务书要求提取.md](docs/任务书要求提取.md)。
 
-## 功能
+## 项目目标
 
-- PySide6 桌面界面：摄像头预览、抓拍识别和选择本地图片识别。
-- OpenCV 摄像头适配：Linux 优先 V4L2，Windows 优先 DirectShow，macOS 优先 AVFoundation；界面通过设备索引扫描，不把 `/dev/video0` 写死。
-- InsightFace `buffalo_l` 本地 ONNX 模型 + ONNX Runtime CPU 推理；日常演示不需要网络。
-- 开放集 1:N 比对：归一化向量余弦相似度、每人 Top-K 质量加权聚合、质量分级阈值和第一/第二候选差距拒识。
-- 人员库动态扩容：从本地多选图片或当前摄像头画面新增、追加样本；没有固定动作或固定顺序要求。
-- 草稿状态：人员达到默认 3 张合格样本才变为 `active` 并参与识别，避免单张偶然样本直接入库。
-- 数据完整性：样本图和向量 BLOB 分别保存 SHA-256；发现文件替换、缺失或向量改写时停止信任该库。
-- 可复现实验：可下载 LFW，生成固定开放集协议，导出 FPIR、FNIR、Rank-1、拒识率和端到端耗时。
+- 调用外置摄像头，显示实时画面并支持抓拍。
+- 建立不少于 3 个身份的标准人脸库。
+- 对输入图片完成人脸检测、特征提取和开放集 1:N 识别。
+- 匹配成功时显示姓名和相似度，不满足规则时显示“未知人员”。
+- 通过 UI 从摄像头或本地图片新增人员、追加样本。
+- 保留“发现问题—实施优化—同条件复测”的量化过程，并完成至少一项可展示扩展。
+
+## 任务书完成度
+
+| 任务书要求 | 当前状态 | 完成度判断 |
+| --- | --- | --- |
+| 外置摄像头实时采集与拍照 | 已实现跨平台设备扫描、预览线程、停止清屏和抓拍入口 | **代码已实现；需要真实硬件验证** |
+| 不少于 3 个身份的标准库 | 已实现人员、图片和 embedding 的持久化；尚未建立最终 Demo Gallery | **代码已实现；最终数据待 Phase 6** |
+| 姓名/未知人员判别 | 已实现单脸检查、1:N 打分、阈值和候选差距拒识 | **代码已实现；需要数据标定** |
+| 系统 UI | 已实现识别页、标准库页、状态和异常反馈 | **代码已实现；需要真实硬件与交互验收** |
+| 标准库动态扩容 | 已实现本地图片和当前画面新增、追加及重启恢复 | **代码已实现；需要完整链路验收** |
+| 至少一项扩展功能 | 尚未冻结扩展方案；计划优先实现多帧质量择优 | **尚未完成扩展** |
+| 优化前后对比证据 | 已有实验脚本和 LFW 小样本烟雾测试，但没有正式标定/独立评测结果 | **需要数据标定与鲁棒性实验** |
+
+“代码已实现”只说明相应路径存在且自动化测试通过，不等于已经完成真实摄像头、正式数据集或现场条件验收。
+
+## 当前实现
+
+- 以 Python 源码项目运行，不制作 EXE；推荐 Python 3.11–3.13。
+- PySide6 提供桌面 UI，OpenCV 负责摄像头和图片读写。
+- InsightFace `buffalo_l` 与 ONNX Runtime CPU 提取人脸 embedding，模型从本地 `data/models/` 加载。
+- 摄像头帧和本地图片使用同一套检测、质量检查、特征提取和识别服务。
+- 新人员的第一张有效样本入库后立即成为 `active`，可以参与识别；没有固定姿态、动作或图片数量要求。
+- 同一人员可以继续追加多张样本。当前查询时与库中所有 active 人员的所有样本比对，再按人员进行 Top-K 质量加权聚合。
+- SQLite 保存人员、embedding、质量元数据和识别日志；样本原图保存在 `data/faces/`。
+- 图片与向量分别记录 SHA-256，用于发现文件缺失、误覆盖或向量 BLOB 被改写。
+- 默认阈值只是初始运行参数，尚未通过 QMUL-SurvFace 正式标定，不能当作最终最优参数。
+- 当前 LFW pilot 只证明数据集下载、协议生成、真实模型提取和指标导出链路能运行，不作为正式效果结论。
+
+## 阶段 TODO
+
+### Phase 0：录入规则清理（已完成）
+
+- [x] 首张有效样本立即激活人员。
+- [x] 删除固定姿态流程和多张样本激活门槛。
+- [x] 保留空人员 `draft` 兼容，并在启动时迁移已有样本的旧 `draft` 记录。
+- [x] 修正任务书提取和当前实现说明。
+
+### Phase 1：基础链路验收
+
+- [ ] 建立可随时删除的 Development Gallery，不导入最终展示人员。
+- [ ] 验证外置摄像头扫描、预览、停止清屏和抓拍录入。
+- [ ] 验证单张/多张本地图片录入、当前画面录入和动态追加。
+- [ ] 验证 Known、Unknown、低质量输入、多人脸和系统错误提示。
+- [ ] 验证关闭程序后重启，人员和样本仍可正常读取和识别。
+- [ ] 记录问题清单；这些临时身份和结果不进入最终验收数据。
+
+### Phase 2：算法基线
+
+- [ ] 统一 Gallery、Known Probe、Unknown Probe 的数据流和结果格式。
+- [ ] 实现并比较 Single、Max、Mean Prototype 和当前 Top-K 聚合。
+- [ ] 明确区分 Unknown、Low Quality、FTE/FTA 和系统错误。
+- [ ] 固定可回放的输入与指标，避免不同算法使用不同样本。
+
+### Phase 3：数据集调参
+
+- [ ] 使用 QMUL-SurvFace Development/Training 身份构造 Calibration。
+- [ ] 标定身份匹配阈值及确有必要的候选参数。
+- [ ] 使用与 Calibration 身份隔离的人员进行 Open-set Evaluation。
+- [ ] 输出 TPIR、FPIR、FNIR、Rank-1、FTE、FTA 和端到端耗时。
+- [ ] 保存协议、参数、逐样本结果和可复现命令。
+
+### Phase 4：鲁棒性优化
+
+- [ ] 使用 XQLFW 分析跨质量条件下的识别表现。
+- [ ] 使用摄像头开发样本覆盖正常光、暗光、侧脸、模糊、距离变化和复杂背景。
+- [ ] 选择并实现一项主要扩展，优先多帧质量择优。
+- [ ] 比较 Mean Prototype 与 Quality-aware Prototype。
+- [ ] 在相同输入和参数规则下保存优化前后结果、收益与代价。
+
+### Phase 5：参数冻结与 UI 收尾
+
+- [ ] 冻结模型版本、人员表示、质量规则、阈值和运行配置。
+- [ ] 完成 UI 视觉、状态反馈和错误提示收尾。
+- [ ] 补齐操作说明、数据迁移、故障排查和跨平台检查。
+- [ ] 冻结后不再使用最终 Demo Gallery 反向调参。
+
+### Phase 6：最终 Demo Gallery 与验收
+
+- [ ] 参数冻结后再导入“本人 + 少量公开身份”。
+- [ ] Gallery 至少包含 3 个身份；具体数量在本阶段根据展示需要决定。
+- [ ] 本人站到摄像头前演示 Known，同学临时测试 Unknown。
+- [ ] 演示动态新增身份、追加样本、重启恢复和离线运行。
+- [ ] 最终 Demo Gallery 不参与前面的阈值标定或鲁棒性调参。
+
+公开数据集只用于开发阶段的算法选择、调参和独立评测。最终 Demo Gallery 要等算法、阈值和鲁棒性方案冻结后再建立，不能提前混入开发数据或调参过程。
 
 ## 安装
 
-推荐 Python 3.11–3.13，Windows、Linux、macOS 均可运行。
+Windows、Linux、macOS 均使用独立虚拟环境。Linux/macOS 示例：
 
 ```bash
 python3.11 -m venv .venv
-source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
+source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-在能联网的开发机器准备一次模型；它会下载到可搬运的 `data/models/`：
+Windows PowerShell 激活命令：
+
+```powershell
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+在能联网的开发机器准备一次模型：
 
 ```bash
 python scripts/prepare_models.py --data-dir ./data
 ```
 
-演示机器只需复制源码和整个 `data/` 目录。模型加载前会关闭 Albumentations 的在线版本检查，因此正常启动不会因网络不可用而失败。
+脚本把模型放入可搬运的 `data/models/`。应用启动和正常演示只读取本地模型，不主动联网；演示机器需要复制源码和完整 `data/` 目录。
 
 ## 启动与操作
 
@@ -42,54 +133,64 @@ python -m camera_face_comparison --data-dir ./data
 
 ### 实时比对
 
-1. 点击“刷新设备”，选择外置摄像头，启动预览。
-2. 点击“抓拍并比对”，或点击“选择本地图片”。两种输入走同一套识别规则。
-3. 结果显示姓名、相似度、处理耗时；分数或候选差距不够时显示未知人员和原因。
-4. 点击“停止预览”会清空画面与最后一帧，避免误把旧画面当作实时视频。
+1. 刷新设备并选择摄像头，然后启动预览。
+2. 点击“抓拍并比对”，或点击“选择本地图片”。
+3. 查看姓名/未知人员、相似度、判定原因和处理耗时。
+4. 停止预览后，程序清空当前帧和最后显示画面。
 
 ### 标准人脸库
 
-- “从本地图片新增人员”：输入姓名后可多选图片。每张都必须检测到单张、质量合格的人脸。
-- “从当前画面新增人员”：把当前画面作为一张样本创建人员；样本不足时显示草稿状态。
-- “为选中人员导入图片”或“添加当前画面”：为已有人员追加任意数量的样本。
-- 人员达到 `data/config.toml` 中的 `min_active_samples`（默认 3）后自动激活。姿态提示可以作为采集建议，但程序不要求五个固定动作。
+- “从本地图片新增人员”：输入姓名后选择一张或多张图片。
+- “从当前画面新增人员”：把当前摄像头帧作为首张样本。
+- 第一张通过单脸和质量检查的图片保存成功后，人员立即参与识别。
+- “为选中人员导入图片”或“添加当前画面”可以继续追加样本。
+- 多张样本可改善覆盖范围，但不是录入门槛，也不要求固定动作。
 
-## 识别规则
+## 当前识别规则
 
-待测图片不会与标准库原图做像素级比较。系统把单张合格人脸转为 L2 归一化特征向量 `q`，与每张参考样本 `e` 计算余弦相似度：
+系统不做原图像素级比较。输入人脸和标准库样本都被转换为 L2 归一化特征向量，余弦相似度为：
 
 ```text
 sim(q, e) = q · e
 ```
 
-每个人先取最好的 Top-K 样本（默认 3），再按样本入库质量加权。只有同时满足下列条件才输出姓名：
+当前实现对每个 active 人员执行以下操作：
+
+1. Query 与该人员的所有样本分别计算相似度。
+2. 选择分数最高的 Top-K 个样本；样本少于 K 时使用全部样本。
+3. 按入库质量分数加权，得到该人员的候选分数。
+4. 对所有人员排序，检查最佳分数阈值和第一/第二候选差距。
+
+只有两项都满足时才输出姓名：
 
 ```text
 最佳人员分数 >= 当前探针质量等级的 match_threshold
 最佳人员分数 - 第二人员分数 >= 当前探针质量等级的 min_margin
 ```
 
-图片过暗、过曝、模糊、对比度低、脸太小、无人脸或可信人脸超过一张，会在比对前拒绝。高质量与中等质量探针使用不同阈值；阈值位于 `data/config.toml`，不是写死在算法中。
+只有一个候选人员时没有第二名，只检查匹配阈值。无人脸、多人脸、脸过小、明显模糊或质量等级为 `reject` 时不会进入身份打分。
 
-## 数据目录与完整性
+## 数据目录与一致性检查
 
 ```text
 data/
-├─ config.toml                    # 阈值、质量门槛、激活样本数
+├─ config.toml                    # 识别阈值和质量规则
 ├─ face_library.sqlite            # 人员、向量、质量元数据、识别日志
 ├─ faces/<person-id>/             # 已入库样本图片
 ├─ models/buffalo_l/              # 离线 ONNX 模型
-├─ datasets/                      # LFW 归档、图片与协议（可选）
-└─ logs/                          # LFW 评分记录和实验报告
+├─ datasets/                      # 开发数据集、协议（可选）
+└─ logs/                          # 评分记录和实验报告
 ```
 
-SQLite 开启外键、WAL 和短写事务。每张已入库图片和每个 `float32` 向量 BLOB 都有独立 SHA-256。检查的是标准库参考资料，不会给摄像头当前帧做哈希；目的是发现样本图被外部覆盖、图片缺失或数据库向量被改写。它不是防御拥有完整磁盘控制权的攻击者。
+SQLite 开启外键、WAL、busy timeout 和短写事务。人员与一批样本的创建使用同一个数据库事务；图片先写入 staging 目录，全部成功后再进入正式目录。旧 `config.toml` 中残留的 `[enrollment]` 和 `min_active_samples` 会被忽略，不阻止启动。
 
-`data/` 被 Git 忽略，里面可能含有人脸图片、模型和实验数据。
+SHA-256 检查针对已入库参考图片和 SQLite 中的 embedding BLOB，不检查摄像头当前帧，也不参与相似度计算。它用于发现误删、误替换和局部数据损坏，不用于抵御能够同时改写图片、向量和哈希值的攻击者。
 
-## LFW 真实评测
+`data/` 被 Git 忽略，可能包含人脸图片、模型和实验数据。
 
-下载和评测都需要显式运行，应用本身不会自动下载数据。
+## 当前 LFW 烟雾测试
+
+现有脚本可下载 LFW、生成一个小型开放集协议并验证真实模型链路：
 
 ```bash
 python scripts/prepare_lfw.py --data-dir ./data --download \
@@ -99,44 +200,21 @@ python scripts/prepare_lfw.py --data-dir ./data --download \
 python scripts/evaluate_lfw.py --data-dir ./data --min-face-size 80
 ```
 
-第一条命令下载 LFW funneled 归档，支持断点续传，并以 scikit-learn 公布的 SHA-256 校验后再解压。它生成 `data/datasets/lfw_open_set_protocol.json`：已知人员的模板图和探针图分离，未知人员从不进入图库。
-
-第二条命令使用本地模型逐张提取真实向量，输出：
-
-- `data/logs/lfw_scores.jsonl`：可回放的逐探针分数、样本质量和耗时；
-- `data/logs/lfw_evaluation_report.json`：基础版与优化版的 FPIR、FNIR、Rank-1、未知拒识率、误识数和平均耗时。
-
-`--min-face-size 80` 只适用于 250×250 的 LFW 评测图，不会修改摄像头运行的 `config.toml`。当前仓库已跑过一次小样本真实 pilot；结果、拒绝图片数量和限制写在 [design.md](design.md#7-开源数据集实验)。小样本上没有观察到优化优于基线的差异，不能据此宣称提升。
-
-若需要校准阈值，应从最终评测集之外的留出集导出 JSONL，再分别校准高质量和中等质量探针：
-
-```bash
-python scripts/calibrate_thresholds.py --data-dir ./data \
-  --scores ./data/calibration_high.jsonl --quality-tier high
-
-python scripts/calibrate_thresholds.py --data-dir ./data \
-  --scores ./data/calibration_medium.jsonl --quality-tier medium
-```
-
-使用同一份已保存评分记录重复生成基线/优化版对比：
-
-```bash
-python scripts/evaluate_experiment.py \
-  --data-dir ./data --scores ./data/logs/lfw_scores.jsonl
-```
+输出包括逐 Probe 分数和汇总指标。该 pilot 没有独立的 Calibration/Open-set Evaluation 身份划分，样本量也不足，因此只作为链路烟雾测试。正式阈值和鲁棒性结论必须等 Phase 3、Phase 4 完成后再给出。
 
 ## 测试
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest -q
 python -m ruff check .
+python -m compileall -q src scripts tests
 ```
 
-自动化测试不访问真实摄像头、网络、个人照片或本地模型。LFW 脚本和摄像头流程需要按上面的真实命令手工验收。
+自动化测试不访问网络、个人照片、本地模型或真实摄像头。外置摄像头、公开数据集和现场 UI 仍需按对应阶段手工验收。
 
 ## 摄像头故障排查
 
-- Linux：`ls /dev/video*` 查看系统识别的设备，并确认当前用户有视频设备权限。程序仍通过 OpenCV 索引打开设备。
-- Windows：在系统隐私设置中允许桌面应用访问摄像头，关闭占用摄像头的软件。
-- macOS：在“隐私与安全性”中授予终端或 Python 摄像头权限。
-- 模型缺失：在有网络的机器运行 `prepare_models.py`，然后复制 `data/models/`。
+- Linux：`ls /dev/video*` 查看系统识别的设备，并确认当前用户有视频设备权限。程序通过 OpenCV 设备索引打开，Linux 优先 V4L2，不写死 `/dev/video0`。
+- Windows：在隐私设置中允许桌面应用访问摄像头；程序优先 DirectShow，失败时回退 OpenCV 通用后端。
+- macOS：在“隐私与安全性”中授予终端或 Python 摄像头权限；程序优先 AVFoundation。
+- 模型缺失：在有网络的机器运行 `scripts/prepare_models.py`，再复制 `data/models/`。
