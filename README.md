@@ -11,7 +11,7 @@
 - 对输入图片完成人脸检测、特征提取和开放集 1:N 识别。
 - 匹配成功时显示姓名和相似度，不满足规则时显示“未知人员”。
 - 通过 UI 从摄像头或本地图片新增人员、追加样本。
-- 保留“发现问题—实施优化—同条件复测”的量化过程，完成至少一项可展示、可量化的扩展功能。
+- 保留“发现问题—实施优化—同条件复测”的量化过程，按开发计划完成可展示、可量化的鲁棒性和端到端时间优化。
 
 ## 任务书完成度
 
@@ -22,7 +22,7 @@
 | 姓名/未知人员判别 | 已实现单脸检查、1:N 打分、阈值和候选差距拒识 | **代码已实现；需要数据标定** |
 | 系统 UI | 已实现识别页、标准库页、状态和异常反馈 | **Phase 1 功能链路已通过；视觉收尾在 Phase 5** |
 | 标准库动态扩容 | 已实现本地图片和当前画面新增、追加及重启恢复 | **Phase 1 完整链路已通过** |
-| 至少一项扩展功能 | 计划优先实现“短时间窗口多帧采集 + 质量择优”，并与单帧基线同条件比较 | **尚未完成扩展** |
+| 扩展优化功能 | 计划实现“短时间窗口多帧采集 + 质量择优”和端到端时间优化，并分别保留基线对比 | **尚未完成扩展** |
 | 优化前后对比证据 | 已有实验脚本和 LFW 小样本烟雾测试，但没有正式标定/独立评测结果 | **需要数据标定与鲁棒性实验** |
 
 “代码已实现”只说明相应路径存在且自动化测试通过，不等于已经完成真实摄像头、正式数据集或现场条件验收。
@@ -80,8 +80,10 @@
 ### Phase 4：鲁棒性优化
 
 - [ ] 在正常光、可恢复的暗光、轻中度侧脸、轻度运动模糊和距离变化下建立可重复的摄像头测试样本；复杂背景主要检查检测框和多人脸处理。
-- [ ] 先完成一项主扩展：在短时间窗口内采集多帧，通过现有质量指标选择最佳帧，再进入识别。
-- [ ] 用单帧抓拍作为基线，在相同人员、场景和阈值下比较成功率、拒识率与耗时。
+- [ ] 完成鲁棒性扩展：在短时间窗口内采集多帧，通过现有质量指标选择较可靠的帧，再进入识别。
+- [ ] 以单帧抓拍作为基线，在相同人员、场景和阈值下比较多帧方案的成功率、拒识率与耗时。
+- [ ] 完成端到端时间优化：记录输入准备、检测、质量检查、特征提取、标准库检索、判定、日志和界面反馈的总耗时，优化主要耗时环节。
+- [ ] 在相同硬件、模型、Gallery、阈值和测试数据下比较优化前后的分阶段耗时与总耗时。
 - [ ] 时间允许时，再比较 Mean Prototype、当前 Top-K 和简单 Quality-aware Prototype；没有完整实验就不加入最终功能声明。
 - [ ] 保存逐样本结果、失败样例、优化收益和时间代价，形成任务书要求的“优化前—优化后”证据。
 
@@ -104,7 +106,7 @@
 
 ## 可实现优化与系统局限性
 
-扩展功能是课程加分项，不是可有可无的装饰。本项目会优先做能在现有 CPU 桌面应用中完整实现、复测和解释的优化：输入质量门控、多帧质量择优，以及时间允许时的简单质量感知模板。这类方法有明确的研究依据，例如多图质量加权聚合的 [Quality Aware Network](https://openaccess.thecvf.com/content_cvpr_2017/html/Liu_Quality_Aware_Network_CVPR_2017_paper.html)，以及用于估计人脸图像可识别性的 [SER-FIQ](https://openaccess.thecvf.com/content_CVPR_2020/html/Terhorst_SER-FIQ_Unsupervised_Estimation_of_Face_Image_Quality_Based_on_Stochastic_CVPR_2020_paper.html) 和 [MagFace](https://openaccess.thecvf.com/content/CVPR2021/html/Meng_MagFace_A_Universal_Representation_for_Face_Recognition_and_Quality_Assessment_CVPR_2021_paper.html)。课设实现采用可解释的工程简化，不去复现这些论文的训练方法或效果。
+扩展功能是课程加分项。本项目开发计划包含两个方向：一是“短时间窗口多帧采集 + 质量择优”，二是面向完整识别链路的端到端时间优化。前者的目标是减少单帧偶发模糊、眨眼或曝光波动导致的拒识；后者以实际端到端耗时为依据定位瓶颈并实施小范围优化。两者都必须保留优化前基线、同条件复测结果、收益和代价。多帧质量择优不声称解决极端暗光、严重模糊、强遮挡或极端侧脸等信息已经丢失的情况；时间优化也不以牺牲识别结果或异常处理为代价。这类质量评估和多样本聚合方法有明确的研究依据，例如 [Quality Aware Network](https://openaccess.thecvf.com/content_cvpr_2017/html/Liu_Quality_Aware_Network_CVPR_2017_paper.html)、[SER-FIQ](https://openaccess.thecvf.com/content_CVPR_2020/html/Terhorst_SER-FIQ_Unsupervised_Estimation_of_Face_Image_Quality_Based_on_Stochastic_CVPR_2020_paper.html) 和 [MagFace](https://openaccess.thecvf.com/content/CVPR2021/html/Meng_MagFace_A_Universal_Representation_for_Face_Recognition_and_Quality_Assessment_CVPR_2021_paper.html)。课设只采用可解释的工程简化，不复现这些论文的训练方法或效果。
 
 下面的问题不放进 TODO，也不承诺在课设中解决；最终报告会把它们作为系统局限性，并保留失败样例：
 
