@@ -30,14 +30,14 @@ def test_write_recognition_thresholds_persists_calibration_result(tmp_path) -> N
 
     assert reloaded.match_threshold == 0.61
     assert reloaded.min_margin == 0.09
+    assert "[enrollment]" not in settings.config_path.read_text(encoding="utf-8")
 
 
-def test_settings_exposes_active_sample_and_quality_tier_policy(tmp_path) -> None:
-    """Open-set behavior must read activation and tier policy from portable config."""
+def test_settings_exposes_quality_tier_policy(tmp_path) -> None:
+    """Open-set behavior must read quality-tier policy from portable config."""
 
     settings = load_settings(tmp_path)
 
-    assert settings.min_active_samples == 3
     assert set(settings.quality_tiers) == {"high", "medium"}
     assert settings.quality_tiers["high"].match_threshold > 0
     assert (

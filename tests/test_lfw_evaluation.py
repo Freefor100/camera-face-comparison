@@ -32,10 +32,10 @@ def test_lfw_evaluation_extracts_templates_and_keeps_unknown_probe_labels(tmp_pa
 
     dataset_dir = tmp_path / "lfw_funneled"
     enrollment = {
-        "Alice": tuple(_write_images(dataset_dir, "Alice", 100, 3)),
-        "Bob": tuple(_write_images(dataset_dir, "Bob", 200, 3)),
+        "Alice": tuple(_write_images(dataset_dir, "Alice", 100, 1)),
+        "Bob": tuple(_write_images(dataset_dir, "Bob", 200, 1)),
     }
-    known_probe = _write_images(dataset_dir, "Alice", 100, 1, start=4)[0]
+    known_probe = _write_images(dataset_dir, "Alice", 100, 1, start=2)[0]
     unknown_probe = _write_images(dataset_dir, "Unknown", 145, 1)[0]
     protocol = LfwProtocol(
         enrollment=enrollment,

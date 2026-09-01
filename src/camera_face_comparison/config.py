@@ -17,9 +17,6 @@ min_margin = 0.05
 match_threshold = 0.60
 min_margin = 0.08
 
-[enrollment]
-min_active_samples = 3
-
 [quality]
 min_detection_score = 0.70
 min_face_size_px = 112
@@ -53,7 +50,6 @@ class Settings:
     match_threshold: float
     min_margin: float
     top_k: int
-    min_active_samples: int
     quality_tiers: dict[str, QualityTierPolicy]
     min_detection_score: float
     min_face_size_px: int
@@ -83,7 +79,6 @@ def load_settings(data_dir: Path) -> Settings:
         config = tomllib.load(config_file)
     recognition = config["recognition"]
     quality = config["quality"]
-    enrollment = config.get("enrollment", {})
     tier_config = recognition.get("quality_tiers", {})
     quality_tiers = {
         "high": _read_tier(
@@ -107,7 +102,6 @@ def load_settings(data_dir: Path) -> Settings:
         match_threshold=float(recognition["match_threshold"]),
         min_margin=float(recognition["min_margin"]),
         top_k=int(recognition.get("top_k", 3)),
-        min_active_samples=int(enrollment.get("min_active_samples", 3)),
         quality_tiers=quality_tiers,
         min_detection_score=float(quality["min_detection_score"]),
         min_face_size_px=int(quality["min_face_size_px"]),
@@ -185,9 +179,6 @@ def _write_settings_file(
                 "[recognition.quality_tiers.medium]",
                 f"match_threshold = {medium_tier.match_threshold:.6f}",
                 f"min_margin = {medium_tier.min_margin:.6f}",
-                "",
-                "[enrollment]",
-                f"min_active_samples = {settings.min_active_samples}",
                 "",
                 "[quality]",
                 f"min_detection_score = {settings.min_detection_score:.6f}",

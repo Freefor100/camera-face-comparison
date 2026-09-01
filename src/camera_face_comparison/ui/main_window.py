@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -8,15 +7,11 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -30,20 +25,12 @@ from PySide6.QtWidgets import (
 from ..camera import CameraService
 from ..config import Settings
 from ..domain import Person, RecognitionResult
-from ..enrollment import REQUIRED_POSES, EnrollmentService
+from ..enrollment import EnrollmentService
 from ..face_engine import FaceEngine, FaceInputError
 from ..image_input import ImageInput
 from ..integrity import verify_library
 from ..recognition import RecognitionService
 from ..repository import FaceRepository
-
-POSE_LABELS = {
-    "front": "正脸",
-    "left": "向左转脸",
-    "right": "向右转脸",
-    "up": "轻度抬头",
-    "down": "轻度低头",
-}
 
 
 class CameraWorker(QThread):
@@ -105,87 +92,6 @@ class RecognitionWorker(QThread):
         finally:
             if repository is not None:
                 repository.close()
-
-
-class EnrollmentDialog(QDialog):
-    """Five-step enrollment dialog that captures from the main live-preview frame."""
-
-    def __init__(
-        self,
-        *,
-        repository: FaceRepository,
-        settings: Settings,
-        face_engine: FaceEngine,
-        frame_supplier: Callable[[], np.ndarray | None],
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("新增人员并采集五种姿态")
-        self._frame_supplier = frame_supplier
-        self._service = EnrollmentService(
-            repository=repository,
-            settings=settings,
-            face_engine=face_engine,
-            image_saver=_save_bgr_image,
-        )
-        self._session = None
-        self._pose_index = 0
-
-        self.name_input = QLineEdit()
-        self.pose_label = QLabel()
-        self.status_label = QLabel("请先输入姓名并保持画面中只有一个清晰人脸。")
-        self.capture_button = QPushButton("抓拍当前姿态")
-        self.capture_button.clicked.connect(self.capture_pose)
-        buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
-        buttons.rejected.connect(self.reject)
-
-        form = QFormLayout()
-        form.addRow("人员姓名：", self.name_input)
-        form.addRow("当前步骤：", self.pose_label)
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.capture_button)
-        layout.addWidget(buttons)
-        self._refresh_pose_label()
-
-    def capture_pose(self) -> None:
-        frame = self._frame_supplier()
-        if frame is None:
-            self.status_label.setText("请先启动摄像头预览。")
-            return
-        if self._session is None:
-            try:
-                self._session = self._service.begin(self.name_input.text())
-            except ValueError as error:
-                self.status_label.setText(str(error))
-                return
-            self.name_input.setEnabled(False)
-        pose = REQUIRED_POSES[self._pose_index]
-        try:
-            self._session.capture(pose, frame)
-        except (FaceInputError, ValueError) as error:
-            self.status_label.setText(f"采集失败：{error}")
-            return
-
-        self._pose_index += 1
-        if self._pose_index == len(REQUIRED_POSES):
-            try:
-                person = self._session.commit()
-            except Exception as error:  # noqa: BLE001 - storage errors must stay inside the dialog
-                self.status_label.setText(f"保存失败：{error}")
-                return
-            self.status_label.setText(f"已录入 {person.display_name} 的五张样本。")
-            self.capture_button.setEnabled(False)
-            self.accept()
-            return
-        self.status_label.setText("采集成功，请完成下一种姿态。")
-        self._refresh_pose_label()
-
-    def _refresh_pose_label(self) -> None:
-        if self._pose_index < len(REQUIRED_POSES):
-            pose = REQUIRED_POSES[self._pose_index]
-            self.pose_label.setText(f"{self._pose_index + 1}/5：{POSE_LABELS[pose]}")
 
 
 class MainWindow(QMainWindow):
@@ -282,7 +188,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(14)
         title = QLabel("标准人脸库")
         title.setObjectName("pageTitle")
-        subtitle = QLabel("样本达到 3 张合格图片后自动激活；图片可来自本地文件或当前摄像头画面。")
+        subtitle = QLabel("一张合格图片即可参与识别；可继续追加不同来源和角度的样本。")
         subtitle.setObjectName("pageSubtitle")
         self.people_list = QListWidget()
         self.people_list.setObjectName("peopleList")
@@ -461,22 +367,6 @@ class MainWindow(QMainWindow):
         self.refresh_people()
         self.status_label.setText(f"已追加 {count} 张合格图片。")
 
-    def open_enrollment(self) -> None:
-        if self._current_frame is None:
-            QMessageBox.information(self, "需要摄像头画面", "请先在实时比对页启动摄像头预览。")
-            return
-        dialog = EnrollmentDialog(
-            repository=self._repository,
-            settings=self._settings,
-            face_engine=self._face_engine,
-            frame_supplier=lambda: self._current_frame.copy()
-            if self._current_frame is not None
-            else None,
-            parent=self,
-        )
-        if dialog.exec() == QDialog.Accepted:
-            self.refresh_people()
-
     def append_sample_to_selected_person(self) -> None:
         if self._current_frame is None:
             QMessageBox.information(self, "需要摄像头画面", "请先在实时比对页启动摄像头预览。")
@@ -531,11 +421,7 @@ class MainWindow(QMainWindow):
     def _enrollment_message(self, person: Person) -> str:
         if person.lifecycle == "active":
             return f"{person.display_name} 已激活，可以参与识别。"
-        sample_count = len(self._repository.list_samples(person.id))
-        remaining = max(0, self._settings.min_active_samples - sample_count)
-        return (
-            f"{person.display_name} 已保存为草稿，还需至少 {remaining} 张合格样本才会参与识别。"
-        )
+        return f"{person.display_name} 尚无有效样本，请先添加一张合格图片。"
 
     def refresh_people(self) -> None:
         people = self._repository.list_people()

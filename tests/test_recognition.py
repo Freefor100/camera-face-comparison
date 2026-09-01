@@ -109,13 +109,13 @@ def test_recognition_service_returns_name_for_best_library_identity(tmp_path) ->
         repository,
         settings,
         "Alice",
-        [np.array([1.0, 0.0], dtype=np.float32)] * 3,
+        [np.array([1.0, 0.0], dtype=np.float32)],
     )
     _create_active_person(
         repository,
         settings,
         "Bob",
-        [np.array([0.2, 0.98], dtype=np.float32)] * 3,
+        [np.array([0.2, 0.98], dtype=np.float32)],
     )
 
     class ProbeEngine:
@@ -201,7 +201,6 @@ def _create_active_person(
         person_id=person_id,
         display_name=name,
         samples=samples,
-        min_active_samples=3,
     )
 
 

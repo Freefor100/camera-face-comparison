@@ -60,7 +60,7 @@ def evaluate_lfw_protocol(
                 continue
             person_embeddings.append(embedding)
             person_quality.append(profile.score)
-        if len(person_embeddings) >= settings.min_active_samples:
+        if person_embeddings:
             gallery_embeddings[person_id] = person_embeddings
             gallery_quality[person_id] = person_quality
 

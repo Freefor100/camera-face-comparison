@@ -53,7 +53,7 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
     assert "草稿" in window.people_list.item(0).text()
     assert window.import_compare_button.text() == "选择本地图片"
     assert window.add_person_from_files_button.text() == "从本地图片新增人员"
-    assert "还需至少 3 张" in window._enrollment_message(person)
+    assert "尚无有效样本" in window._enrollment_message(person)
     assert not window.compare_button.isEnabled()
 
     window.start_camera()

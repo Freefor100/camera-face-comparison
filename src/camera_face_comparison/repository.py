@@ -65,7 +65,6 @@ class FaceRepository:
         person_id: str,
         display_name: str,
         samples: Sequence[SampleInput],
-        min_active_samples: int = 3,
     ) -> Person:
         """Persist a new identity and all of its samples atomically."""
 
@@ -75,14 +74,11 @@ class FaceRepository:
         if not samples:
             raise ValueError("at least one sample is required")
 
-        if min_active_samples < 1:
-            raise ValueError("min_active_samples must be at least one")
-        lifecycle = "active" if len(samples) >= min_active_samples else "draft"
         person = Person(
             id=person_id,
             display_name=normalized_name,
             created_at=_now(),
-            lifecycle=lifecycle,
+            lifecycle="active",
         )
         prepared_samples = [
             self._make_sample(
@@ -115,7 +111,6 @@ class FaceRepository:
         quality: dict[str, float | str],
         source_type: str = "camera",
         image_sha256: str | None = None,
-        min_active_samples: int = 3,
     ) -> FaceSample:
         sample = self._make_sample(
             person_id=person_id,
@@ -126,17 +121,11 @@ class FaceRepository:
             source_type=source_type,
             image_sha256=image_sha256,
         )
-        if min_active_samples < 1:
-            raise ValueError("min_active_samples must be at least one")
         with self._write_transaction():
             self._insert_sample(sample)
-            sample_count = self._connection.execute(
-                "SELECT COUNT(*) FROM face_samples WHERE person_id = ?", (person_id,)
-            ).fetchone()[0]
-            if sample_count >= min_active_samples:
-                self._connection.execute(
-                    "UPDATE persons SET lifecycle = 'active' WHERE id = ?", (person_id,)
-                )
+            self._connection.execute(
+                "UPDATE persons SET lifecycle = 'active' WHERE id = ?", (person_id,)
+            )
         return sample
 
     def add_samples(
@@ -144,14 +133,11 @@ class FaceRepository:
         *,
         person_id: str,
         samples: Sequence[SampleInput],
-        min_active_samples: int = 3,
     ) -> list[FaceSample]:
-        """Append prepared samples in one transaction and activate the person when eligible."""
+        """Append prepared samples in one transaction and activate the person."""
 
         if not samples:
             raise ValueError("at least one sample is required")
-        if min_active_samples < 1:
-            raise ValueError("min_active_samples must be at least one")
         prepared_samples = [
             self._make_sample(
                 person_id=person_id,
@@ -167,13 +153,9 @@ class FaceRepository:
         with self._write_transaction():
             for sample in prepared_samples:
                 self._insert_sample(sample)
-            sample_count = self._connection.execute(
-                "SELECT COUNT(*) FROM face_samples WHERE person_id = ?", (person_id,)
-            ).fetchone()[0]
-            if sample_count >= min_active_samples:
-                self._connection.execute(
-                    "UPDATE persons SET lifecycle = 'active' WHERE id = ?", (person_id,)
-                )
+            self._connection.execute(
+                "UPDATE persons SET lifecycle = 'active' WHERE id = ?", (person_id,)
+            )
         return prepared_samples
 
     def sqlite_integrity_messages(self) -> tuple[str, ...]:
@@ -293,6 +275,7 @@ class FaceRepository:
             self._add_column_if_missing("face_samples", "image_sha256", "TEXT")
             self._add_column_if_missing("face_samples", "embedding_sha256", "TEXT")
             self._backfill_embedding_hashes()
+            self._activate_people_with_samples()
 
     @staticmethod
     def _make_sample(
@@ -389,6 +372,20 @@ class FaceRepository:
                 "UPDATE face_samples SET embedding_sha256 = ? WHERE id = ?",
                 (hashlib.sha256(row["embedding_blob"]).hexdigest(), row["id"]),
             )
+
+    def _activate_people_with_samples(self) -> None:
+        """Migrate legacy draft identities that already contain usable samples."""
+
+        self._connection.execute(
+            """
+            UPDATE persons
+            SET lifecycle = 'active'
+            WHERE lifecycle = 'draft'
+              AND EXISTS (
+                  SELECT 1 FROM face_samples WHERE face_samples.person_id = persons.id
+              )
+            """
+        )
 
     @contextmanager
     def _write_transaction(self) -> Generator[None, None, None]:
