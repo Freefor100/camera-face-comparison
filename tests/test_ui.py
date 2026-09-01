@@ -17,7 +17,11 @@ from camera_face_comparison.ui.main_window import MainWindow
 
 
 class FakeCamera:
+    def __init__(self) -> None:
+        self.discover_calls = 0
+
     def discover(self) -> list[CameraDevice]:
+        self.discover_calls += 1
         return [CameraDevice(index=3, label="Fake external camera")]
 
     def open(self, index: int) -> None:
@@ -56,10 +60,11 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
     )
     repository.close()
 
+    camera = FakeCamera()
     window = MainWindow(
         settings=settings,
         face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
-        camera=FakeCamera(),  # type: ignore[arg-type]
+        camera=camera,  # type: ignore[arg-type]
     )
     assert window.camera_combo.count() == 1
     assert window.people_list.count() == 1
@@ -72,9 +77,18 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
     window.start_camera()
     assert window.stop_button.isEnabled()
     assert window.compare_button.isEnabled()
+    assert not window.refresh_button.isEnabled()
+    assert not window.camera_combo.isEnabled()
+
+    window.refresh_cameras()
+    assert camera.discover_calls == 1
+    assert window.camera_combo.count() == 1
+
     window.stop_camera()
     assert window.start_button.isEnabled()
     assert not window.compare_button.isEnabled()
+    assert window.refresh_button.isEnabled()
+    assert window.camera_combo.isEnabled()
     window.close()
 
 

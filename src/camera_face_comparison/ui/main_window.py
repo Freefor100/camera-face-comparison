@@ -210,6 +210,9 @@ class MainWindow(QMainWindow):
         return page
 
     def refresh_cameras(self) -> None:
+        if self._camera_worker is not None:
+            self.status_label.setText("请先停止预览，再刷新摄像头设备。")
+            return
         self.camera_combo.clear()
         try:
             devices = self._camera.discover()
@@ -231,6 +234,8 @@ class MainWindow(QMainWindow):
         self._camera_worker.worker_error.connect(self.on_camera_error)
         self._camera_worker.worker_status.connect(self.status_label.setText)
         self._camera_worker.start()
+        self.camera_combo.setEnabled(False)
+        self.refresh_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.compare_button.setEnabled(True)
@@ -241,6 +246,8 @@ class MainWindow(QMainWindow):
             self._camera_worker.wait(2000)
             self._camera_worker = None
         self.start_button.setEnabled(True)
+        self.camera_combo.setEnabled(True)
+        self.refresh_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.compare_button.setEnabled(False)
         self._current_frame = None
