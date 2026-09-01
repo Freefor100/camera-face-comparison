@@ -293,13 +293,15 @@ class MainWindow(QMainWindow):
 
     def on_recognition_result(self, result: RecognitionResult) -> None:
         self._last_bbox = result.bbox
+        candidate_gap = _format_candidate_gap(result)
         if result.status == "matched":
             self.result_label.setText(
-                f"识别成功：{result.display_name}｜相似度 {result.top_score:.3f}"
+                f"识别成功：{result.display_name}｜相似度 {result.top_score:.3f}｜{candidate_gap}"
             )
         elif result.status == "unknown":
             self.result_label.setText(
-                f"未知人员｜最高相似度 {result.top_score or 0.0:.3f}｜原因：{result.reason}"
+                f"未知人员｜最高相似度 {result.top_score or 0.0:.3f}｜{candidate_gap}"
+                f"｜原因：{result.reason}"
             )
         else:
             self.result_label.setText(f"无法识别当前画面：{result.reason}")
@@ -477,6 +479,12 @@ def _save_bgr_image(path: Path, frame: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(path), frame):
         raise RuntimeError(f"could not save image to {path}")
+
+
+def _format_candidate_gap(result: RecognitionResult) -> str:
+    if result.top_score is None or result.runner_up_score is None:
+        return "候选差距 --"
+    return f"候选差距 {result.top_score - result.runner_up_score:.3f}"
 
 
 APP_STYLE_SHEET = """

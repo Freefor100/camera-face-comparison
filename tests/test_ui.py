@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from camera_face_comparison.camera import CameraDevice
 from camera_face_comparison.config import load_settings
+from camera_face_comparison.domain import RecognitionResult
 from camera_face_comparison.repository import FaceRepository, SampleInput
 from camera_face_comparison.ui.main_window import MainWindow
 
@@ -94,4 +95,31 @@ def test_stopping_preview_clears_the_last_camera_frame(tmp_path, qapplication) -
     assert window._current_frame is None
     assert window.preview_label.text() == "预览已停止"
     assert preview is None or preview.isNull()
+    window.close()
+
+
+def test_recognition_result_shows_candidate_gap(tmp_path, qapplication) -> None:
+    settings = load_settings(tmp_path)
+    window = MainWindow(
+        settings=settings,
+        face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
+        camera=FakeCamera(),  # type: ignore[arg-type]
+    )
+
+    window.on_recognition_result(
+        RecognitionResult(
+            status="matched",
+            person_id="alice",
+            display_name="Alice",
+            top_score=0.72,
+            runner_up_score=0.61,
+            latency_ms=18.0,
+            reason=None,
+            bbox=None,
+        )
+    )
+
+    assert "相似度 0.720" in window.result_label.text()
+    assert "候选差距 0.110" in window.result_label.text()
+    assert "18 ms" in window.status_label.text()
     window.close()
