@@ -15,6 +15,7 @@ from camera_face_comparison.face_engine import (
     validate_single_face,
 )
 from camera_face_comparison.image_input import assess_quality
+from camera_face_comparison.runtime import ExecutionBackend
 
 
 def _face(*, score: float = 0.95, size: int = 160, blur: float = 140.0) -> FaceObservation:
@@ -111,10 +112,12 @@ def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeyp
         def __init__(self, **kwargs) -> None:
             """保存模型构造参数。"""
             self.kwargs = kwargs
+            type(self).last_kwargs = kwargs
 
         def prepare(self, **kwargs) -> None:
             """保存模型准备参数。"""
             self.prepare_kwargs = kwargs
+            type(self).last_prepare_kwargs = kwargs
 
     app_module = ModuleType("insightface.app")
     app_module.FaceAnalysis = FakeAnalysis
@@ -122,12 +125,25 @@ def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeyp
     insightface_module.app = app_module
     monkeypatch.setitem(sys.modules, "insightface", insightface_module)
     monkeypatch.setitem(sys.modules, "insightface.app", app_module)
+    monkeypatch.setattr(
+        "camera_face_comparison.face_engine.detect_execution_backend",
+        lambda: ExecutionBackend(
+            name="cuda",
+            providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
+            context_id=0,
+        ),
+    )
 
     FaceEngine.from_local_model(settings)
 
     assert os.environ["NO_ALBUMENTATIONS_UPDATE"] == "1"
     assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"
     assert os.environ["MPLCONFIGDIR"] == str(settings.logs_dir / "matplotlib")
+    assert FakeAnalysis.last_kwargs["providers"] == [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+    assert FakeAnalysis.last_prepare_kwargs["ctx_id"] == 0
 
 
 def test_quality_profile_rejects_an_underexposed_face(tmp_path) -> None:

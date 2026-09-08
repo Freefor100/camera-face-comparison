@@ -49,18 +49,18 @@ def test_quality_weighted_aggregation_downweights_a_poor_reference_image() -> No
 
 
 def test_decide_match_returns_best_person_when_score_and_gap_pass() -> None:
-    """最高得分和候选差距都通过时才允许返回最佳人员。"""
+    """最高得分和候选分差都通过时才允许返回最佳人员。"""
 
     decision = decide_match(
         {"alice": 0.84, "bob": 0.70},
         match_threshold=0.80,
-        min_margin=0.10,
+        min_score_gap=0.10,
     )
 
     assert decision.status == "matched"
     assert decision.person_id == "alice"
     assert decision.top_score == 0.84
-    assert decision.runner_up_score == 0.70
+    assert decision.second_score == 0.70
 
 
 def test_decide_match_returns_unknown_when_best_person_is_too_close() -> None:
@@ -69,12 +69,12 @@ def test_decide_match_returns_unknown_when_best_person_is_too_close() -> None:
     decision = decide_match(
         {"alice": 0.91, "bob": 0.87},
         match_threshold=0.80,
-        min_margin=0.10,
+        min_score_gap=0.10,
     )
 
     assert decision.status == "unknown"
     assert decision.person_id is None
-    assert decision.reason == "candidate_gap_below_minimum"
+    assert decision.reason == "score_gap_below_minimum"
 
 
 def test_recognize_embedding_uses_all_samples_before_selecting_person() -> None:
@@ -93,7 +93,7 @@ def test_recognize_embedding_uses_all_samples_before_selecting_person() -> None:
             ],
         },
         match_threshold=0.80,
-        min_margin=0.05,
+        min_score_gap=0.05,
     )
 
     assert decision.status == "matched"

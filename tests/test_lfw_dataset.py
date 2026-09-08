@@ -4,13 +4,17 @@ import json
 
 import pytest
 
-from camera_face_comparison.lfw_dataset import build_lfw_protocol, write_lfw_protocol
+from camera_face_comparison.lfw_dataset import (
+    build_full_lfw_protocol,
+    build_lfw_protocol,
+    write_lfw_protocol,
+)
 
 
 def test_lfw_protocol_keeps_known_and_unknown_people_disjoint(tmp_path) -> None:
     """可复现的开放集划分不能把未知身份同时放入标准库。"""
 
-    dataset_dir = tmp_path / "lfw-deepfunneled"
+    dataset_dir = tmp_path / "lfw_funneled"
     for name in ("Alice", "Bob", "Carol", "Dave", "Eve"):
         person_dir = dataset_dir / name
         person_dir.mkdir(parents=True)
@@ -35,6 +39,44 @@ def test_lfw_protocol_keeps_known_and_unknown_people_disjoint(tmp_path) -> None:
     saved = json.loads(output.read_text(encoding="utf-8"))
     assert saved["protocol"] == "lfw-open-set-v1"
     assert saved["enrollment"]["Alice"][0] == "Alice/Alice_0001.jpg"
+
+
+def test_full_lfw_protocol_assigns_every_image_to_gallery_or_probe(tmp_path) -> None:
+    """全量协议必须覆盖每张图片，并保持身份划分可复现且互斥。"""
+
+    dataset_dir = tmp_path / "lfw_funneled"
+    counts = {"Alice": 4, "Bob": 3, "Carol": 2, "Dave": 1}
+    all_paths: set[str] = set()
+    for name, count in counts.items():
+        person_dir = dataset_dir / name
+        person_dir.mkdir(parents=True)
+        for index in range(1, count + 1):
+            relative_path = f"{name}/{name}_{index:04d}.jpg"
+            (dataset_dir / relative_path).write_bytes(b"fixture")
+            all_paths.add(relative_path)
+
+    protocol = build_full_lfw_protocol(
+        dataset_dir,
+        known_fraction=0.5,
+        enrollment_per_identity=2,
+        seed=2026,
+    )
+    protocol_again = build_full_lfw_protocol(
+        dataset_dir,
+        known_fraction=0.5,
+        enrollment_per_identity=2,
+        seed=2026,
+    )
+
+    enrolled_paths = {path for paths in protocol.enrollment.values() for path in paths}
+    probe_paths = {probe.relative_path for probe in protocol.probes}
+    assert enrolled_paths | probe_paths == all_paths
+    assert enrolled_paths.isdisjoint(probe_paths)
+    assert protocol == protocol_again
+    known_ids = set(protocol.enrollment)
+    assert len(known_ids) == 2
+    assert {probe.expected_person_id for probe in protocol.probes} <= known_ids | {None}
+    assert any(probe.expected_person_id is None for probe in protocol.probes)
 
 
 def test_lfw_downloader_uses_the_get_accessible_mirror_and_reports_network_errors(tmp_path) -> None:

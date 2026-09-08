@@ -340,14 +340,14 @@ class MainWindow(QMainWindow):
     def on_recognition_result(self, result: RecognitionResult) -> None:
         """把服务结果转换为识别标签、耗时和检测框展示。"""
         self._last_bbox = result.bbox
-        candidate_gap = _format_candidate_gap(result)
+        score_gap_text = _format_score_gap(result)
         if result.status == "matched":
             self.result_label.setText(
-                f"识别成功：{result.display_name}｜相似度 {result.top_score:.3f}｜{candidate_gap}"
+                f"识别成功：{result.display_name}｜相似度 {result.top_score:.3f}｜{score_gap_text}"
             )
         elif result.status == "unknown":
             self.result_label.setText(
-                f"未知人员｜最高相似度 {result.top_score or 0.0:.3f}｜{candidate_gap}"
+                f"未知人员｜最高相似度 {result.top_score or 0.0:.3f}｜{score_gap_text}"
                 f"｜原因：{result.reason}"
             )
         else:
@@ -544,11 +544,11 @@ def _save_bgr_image(path: Path, frame: np.ndarray) -> None:
         raise RuntimeError(f"could not save image to {path}")
 
 
-def _format_candidate_gap(result: RecognitionResult) -> str:
-    """将识别结果中的候选差距格式化为界面文本。"""
-    if result.top_score is None or result.runner_up_score is None:
-        return "候选差距 --"
-    return f"候选差距 {result.top_score - result.runner_up_score:.3f}"
+def _format_score_gap(result: RecognitionResult) -> str:
+    """将识别结果中的候选分差格式化为界面文本。"""
+    if result.top_score is None or result.second_score is None:
+        return "候选分差 --"
+    return f"候选分差 {result.top_score - result.second_score:.3f}"
 
 
 APP_STYLE_SHEET = """

@@ -22,7 +22,7 @@ class MatchDecision:
     status: str
     person_id: str | None
     top_score: float | None
-    runner_up_score: float | None
+    second_score: float | None
     reason: str | None
 
 
@@ -82,7 +82,7 @@ class RecognitionService:
                     person_id=None,
                     display_name=None,
                     top_score=None,
-                    runner_up_score=None,
+                    second_score=None,
                     latency_ms=(perf_counter() - started_at) * 1000,
                     reason=f"library_integrity_failed:{first_failure.kind}",
                     bbox=None,
@@ -98,7 +98,7 @@ class RecognitionService:
                     person_id=None,
                     display_name=None,
                     top_score=None,
-                    runner_up_score=None,
+                    second_score=None,
                     latency_ms=(perf_counter() - started_at) * 1000,
                     reason="quality_rejected:" + ",".join(profile.reasons or ("low_score",)),
                     bbox=probe.bbox,
@@ -121,7 +121,7 @@ class RecognitionService:
                 sample_quality_by_person=quality_by_person,
                 top_k=self._settings.top_k,
                 match_threshold=policy.match_threshold,
-                min_margin=policy.min_margin,
+                min_score_gap=policy.min_score_gap,
             )
             names = {person.id: person.display_name for person in people}
             result = RecognitionResult(
@@ -129,7 +129,7 @@ class RecognitionService:
                 person_id=decision.person_id,
                 display_name=names.get(decision.person_id),
                 top_score=decision.top_score,
-                runner_up_score=decision.runner_up_score,
+                second_score=decision.second_score,
                 latency_ms=(perf_counter() - started_at) * 1000,
                 reason=decision.reason,
                 bbox=probe.bbox,
@@ -140,7 +140,7 @@ class RecognitionService:
                 person_id=None,
                 display_name=None,
                 top_score=None,
-                runner_up_score=None,
+                second_score=None,
                 latency_ms=(perf_counter() - started_at) * 1000,
                 reason=str(error),
                 bbox=None,
@@ -153,7 +153,7 @@ class RecognitionService:
             decision=result.status,
             person_id=result.person_id,
             top_score=result.top_score,
-            runner_up_score=result.runner_up_score,
+            second_score=result.second_score,
             latency_ms=result.latency_ms,
             reason=result.reason,
         )
@@ -219,14 +219,14 @@ def decide_match(
     person_scores: Mapping[str, float],
     *,
     match_threshold: float,
-    min_margin: float,
+    min_score_gap: float,
 ) -> MatchDecision:
-    """只有最高候选同时通过得分和候选差距检查时才判定为匹配。
+    """只有最高候选同时通过得分和候选分差检查时才判定为匹配。
 
     参数：
         person_scores：已经聚合的人级别得分。
         match_threshold：最高候选的最低接受分数。
-        min_margin：最高候选与第二候选的最小差距。
+        min_score_gap：最高候选与第二候选的最小分差。
     返回：
         匹配或未知判定及其原因。
     前置条件：
@@ -238,24 +238,24 @@ def decide_match(
         return MatchDecision("unknown", None, None, None, "empty_face_library")
 
     person_id, top_score = ranked[0]
-    runner_up_score = ranked[1][1] if len(ranked) > 1 else None
+    second_score = ranked[1][1] if len(ranked) > 1 else None
     if top_score < match_threshold:
         return MatchDecision(
             "unknown",
             None,
             top_score,
-            runner_up_score,
+            second_score,
             "score_below_threshold",
         )
-    if runner_up_score is not None and top_score - runner_up_score < min_margin:
+    if second_score is not None and top_score - second_score < min_score_gap:
         return MatchDecision(
             "unknown",
             None,
             top_score,
-            runner_up_score,
-            "candidate_gap_below_minimum",
+            second_score,
+            "score_gap_below_minimum",
         )
-    return MatchDecision("matched", person_id, top_score, runner_up_score, None)
+    return MatchDecision("matched", person_id, top_score, second_score, None)
 
 
 def recognize_embedding(
@@ -263,7 +263,7 @@ def recognize_embedding(
     query_embedding: np.ndarray,
     embeddings_by_person: Mapping[str, Sequence[np.ndarray]],
     match_threshold: float,
-    min_margin: float,
+    min_score_gap: float,
     sample_quality_by_person: Mapping[str, Sequence[float]] | None = None,
     top_k: int = 2,
 ) -> MatchDecision:
@@ -273,7 +273,7 @@ def recognize_embedding(
         query_embedding：待识别的人脸特征向量。
         embeddings_by_person：每个身份的全部标准样本特征。
         match_threshold：最高候选得分阈值。
-        min_margin：第一、第二候选的最小得分差距。
+        min_score_gap：第一、第二候选的最小候选分差。
         sample_quality_by_person：可选的每张标准样本质量分数。
         top_k：每个身份参与聚合的最高得分样本数。
     返回：
@@ -302,7 +302,7 @@ def recognize_embedding(
     return decide_match(
         person_scores,
         match_threshold=match_threshold,
-        min_margin=min_margin,
+        min_score_gap=min_score_gap,
     )
 
 

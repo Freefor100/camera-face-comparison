@@ -4,7 +4,7 @@
 
 ## 1. 系统边界
 
-当前程序是离线运行的开放集 1:N 人脸识别桌面应用。输入一张摄像头帧或本地图片后，程序在本地人员库中寻找候选人；匹配分数或候选差距不满足当前配置时输出“未知人员”。
+当前程序是离线运行的开放集 1:N 人脸识别桌面应用。输入一张摄像头帧或本地图片后，程序在本地人员库中寻找候选人；匹配分数或候选分差不满足当前配置时输出“未知人员”。
 
 程序不针对已录入人员重新训练分类器。InsightFace `buffalo_l` 是固定的预训练模型；新增人员和追加样本只会增加图片、embedding 和人员记录。
 
@@ -38,7 +38,7 @@ embedding L2 归一化
 亮度、对比度等质量评估
 ```
 
-当前模型从 `data/models/buffalo_l/` 加载，ONNX Runtime 固定使用 `CPUExecutionProvider`。本地模型目录包含 `det_10g.onnx`、`w600k_r50.onnx` 等文件。
+当前模型从 `data/models/buffalo_l/` 加载。Linux NVIDIA 环境由 ONNX Runtime 优先使用 CUDA；程序在模型准备后检查 InsightFace session 的实际 provider，CUDA 不可用时回退 CPU，并将实际后端写入评测报告。本地模型目录包含 `det_10g.onnx`、`w600k_r50.onnx` 等文件。
 
 应用代码没有单独实现对齐器，也不保存对齐后的 112×112 人脸。InsightFace 的识别模型适配器在提取 embedding 时调用五点对齐和模型输入归一化；应用层只接收边界框、检测分数、关键点和最终 embedding。
 
@@ -53,7 +53,7 @@ embedding L2 归一化
 5. 读取标准库中的全部人员和全部样本 embedding。
 6. Query 与每张参考样本计算余弦相似度。
 7. 每个人按相似度选择 Top-K 样本，再按参考样本质量做加权平均。
-8. 对人员分数排序，应用当前质量等级的匹配阈值和候选差距。
+8. 对人员分数排序，应用当前质量等级的匹配阈值和候选分差。
 9. 写入一条识别日志并返回结果。
 
 当前实现中的 `invalid` 包含输入质量不合格和标准库完整性失败；`unknown` 表示图片已成功进入身份比对，但没有通过开放集规则。
@@ -94,8 +94,8 @@ S_i=\frac{\sum_jw_{ij}s_{ij}}{\sum_jw_{ij}}
 S1 < match_threshold
     → unknown / score_below_threshold
 
-存在第二候选，并且 S1 - S2 < min_margin
-    → unknown / candidate_gap_below_minimum
+存在第二候选，并且 S1 - S2 < min_score_gap
+    → unknown / score_gap_below_minimum
 
 其余情况
     → matched / 第一候选人员
@@ -105,7 +105,7 @@ S1 < match_threshold
 
 全新数据目录生成的默认配置为：
 
-| 探针质量 | `match_threshold` | `min_margin` |
+| 探针质量 | `match_threshold` | `min_score_gap` |
 | --- | ---: | ---: |
 | high | 0.50 | 0.05 |
 | medium | 0.60 | 0.08 |
@@ -189,26 +189,32 @@ SQLite 开启外键、WAL、5 秒 busy timeout 和 `BEGIN IMMEDIATE` 写事务�
 - 同身份的其他图片作为 Known Probe；
 - 完全不进入 Gallery 的身份作为 Unknown Probe。
 
-当前协议没有 Calibration/Test 两级身份划分。`scripts/evaluate_lfw.py` 使用与应用相同的 `FaceEngine` 和质量规则提取真实 embedding，然后比较：
+`scripts/evaluate_lfw.py` 使用与应用相同的 `FaceEngine` 和质量规则提取真实 embedding；`EvaluationEmbeddingCache` 按图片 SHA-256 保存有效向量或拒绝原因。当前缓存标识已拆分为：
 
-- baseline：每个人的最高样本分数，使用全局阈值且不使用 margin；
-- optimized：当前 Top-K 质量加权分数，使用质量分层阈值和 margin。
+- `embedding_extraction_id`：模型、检测、对齐和质量过滤配置；
+- `decision_policy_id`：聚合、匹配阈值、候选分差和质量层判定配置。
+
+匹配阈值、候选分差或 K 变化不会改变 `embedding_extraction_id`。
 
 评测构建 Gallery 时，只要某个身份至少有 1 张图片成功提取 embedding，该身份就会进入 Gallery；其余失败图片会单独记录为 enrollment rejection。协议生成器可以为每个身份分配多张图片，但这不是激活门槛。
 
-本机已运行的小型 pilot 包含 3 个入库身份和 3 个未知身份。入库阶段有 3 张图片被拒绝，探针阶段有 5 张图片被拒绝，最终只有 4 张 Known Probe 和 3 张 Unknown Probe 进入打分。Max 基线在这 7 张图片上得到已知 4/4、未知 3/3；当前 Top-K 质量加权策略得到已知 3/4、未知 3/3。
+`split_lfw_protocol()` 在质量过滤前按来源身份把 Probe 固定为 `calibration` 和 `evaluation`。Gallery 保持相同；Known 使用真实 Gallery 身份分组，Unknown 从图片首级目录恢复来源身份，同一来源身份不会跨分区。分区协议保存源协议哈希、种子、分区比例和全部路径。
 
-当前评测报告把 `probe_rejections` 单独列出，但 FPIR、FNIR 和 Rank-1 的分母只包含成功进入打分的 Probe。因此这些结果是“成功提取 embedding 后的条件识别结果”，不是包含检测和质量失败的端到端结果。
+`scripts/export_lfw_decision_scores.py` 是 cache-only 导出入口，不导入或初始化 `FaceEngine`。它从已有缓存生成六种人员聚合：Single、Max、Mean Prototype、Top-K Mean K=2/3/5。Top-K Mean 是普通平均，不读取质量权重。每张有效 Probe 保存第一候选、`top_score`、第二候选、`second_score`、`score_gap`、真实标签、质量指标和评分耗时；拒绝图片另表保存原因。分数表不保存匹配阈值或最小候选分差。
+
+本机当前 `decision_scores.sqlite` 由 LFW 全量缓存生成：4,735 张有效 Gallery、3,842 张有效 Probe、1,901 张 Probe 拒绝，六种方法共 23,052 条分数记录。两个 JSON 摘要只计算无阈值 Rank-1 和分数分布，不执行 Known/Unknown 接收判定。
+
+历史流式报告仍会在给定固定阈值下输出 FPIR/FNIR，但这类结果被标记为历史诊断。项目还已有 XQLFW 官方 pairs 解析、QMUL-SurvFace 官方 MAT 协议解析和相应评测入口；它们不会被 Phase 2 cache-only 导出调用。
 
 ## 11. 当前阈值校准器
 
-`scripts/calibrate_thresholds.py` 读取已预先生成的人员分数 JSONL，在 `0.30–0.80` 的匹配阈值和 `0.00–0.20` 的 margin 之间按 0.01 枚举。
+`scripts/calibrate_thresholds.py` 读取已预先生成的人员分数 JSONL，在 `0.30–0.80` 的匹配阈值和 `0.00–0.20` 的候选分差之间按 0.01 枚举。
 
 当前选择顺序是：
 
 1. 未知人员误接收数量最少；
 2. 已知人员正确识别数量最多；
 3. 若仍相同，选择更高的匹配阈值；
-4. 若仍相同，选择更大的 margin。
+4. 若仍相同，选择更大的候选分差。
 
 脚本可以分别把结果写入 high 或 medium 配置，但当前仓库没有一份独立 Calibration 数据集产生的正式校准结果。

@@ -195,7 +195,7 @@ class FaceRepository:
         decision: str,
         person_id: str | None,
         top_score: float | None,
-        runner_up_score: float | None,
+        second_score: float | None,
         latency_ms: float,
         reason: str | None,
     ) -> None:
@@ -205,7 +205,7 @@ class FaceRepository:
                 """
                 INSERT INTO recognition_logs (
                     id, captured_at, decision, person_id, top_score,
-                    runner_up_score, latency_ms, reason
+                    second_score, latency_ms, reason
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -214,7 +214,7 @@ class FaceRepository:
                     decision,
                     person_id,
                     top_score,
-                    runner_up_score,
+                    second_score,
                     latency_ms,
                     reason,
                 ),
@@ -249,7 +249,7 @@ class FaceRepository:
                     decision TEXT NOT NULL,
                     person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
                     top_score REAL,
-                    runner_up_score REAL,
+                    second_score REAL,
                     latency_ms REAL NOT NULL,
                     reason TEXT
                 );

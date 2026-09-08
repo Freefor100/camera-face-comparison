@@ -13,10 +13,10 @@ def test_calibration_prioritizes_rejecting_unknown_people() -> None:
             CalibrationRecord(None, {"alice": 0.65, "bob": 0.60}),
         ],
         threshold_candidates=[0.50, 0.60, 0.70],
-        margin_candidates=[0.00, 0.10],
+        score_gap_candidates=[0.00, 0.10],
     )
 
     assert result.match_threshold == 0.60
-    assert result.min_margin == 0.10
+    assert result.min_score_gap == 0.10
     assert result.unknown_false_accepts == 0
     assert result.known_correct == 2

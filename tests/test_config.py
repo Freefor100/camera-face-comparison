@@ -24,12 +24,12 @@ def test_write_recognition_thresholds_persists_calibration_result(tmp_path) -> N
     """标定结果必须在下一次应用启动后改变运行参数。"""
 
     settings = load_settings(tmp_path)
-    write_recognition_thresholds(settings, match_threshold=0.61, min_margin=0.09)
+    write_recognition_thresholds(settings, match_threshold=0.61, min_score_gap=0.09)
 
     reloaded = load_settings(tmp_path)
 
     assert reloaded.match_threshold == 0.61
-    assert reloaded.min_margin == 0.09
+    assert reloaded.min_score_gap == 0.09
 
 
 def test_settings_exposes_quality_tier_policy(tmp_path) -> None:
@@ -55,10 +55,10 @@ def test_write_quality_tier_thresholds_keeps_the_other_probe_policy(tmp_path) ->
         settings,
         tier="medium",
         match_threshold=0.63,
-        min_margin=0.11,
+        min_score_gap=0.11,
     )
 
     reloaded = load_settings(tmp_path)
     assert reloaded.quality_tiers["high"] == high_before
     assert reloaded.quality_tiers["medium"].match_threshold == 0.63
-    assert reloaded.quality_tiers["medium"].min_margin == 0.11
+    assert reloaded.quality_tiers["medium"].min_score_gap == 0.11

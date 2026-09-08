@@ -19,7 +19,7 @@ class CalibrationResult:
     """候选阈值中安全性优先且已记录测量结果的一组阈值。"""
 
     match_threshold: float
-    min_margin: float
+    min_score_gap: float
     unknown_false_accepts: int
     known_correct: int
 
@@ -28,14 +28,14 @@ def calibrate_thresholds(
     *,
     records: Sequence[CalibrationRecord],
     threshold_candidates: Iterable[float],
-    margin_candidates: Iterable[float],
+    score_gap_candidates: Iterable[float],
 ) -> CalibrationResult:
     """先优先拒绝未知人员，再在候选范围内最大化已知人员正确数。
 
     参数：
         records：带真实标签的人级得分记录。
         threshold_candidates：待搜索的最高相似度阈值。
-        margin_candidates：待搜索的第一、第二候选差距阈值。
+        score_gap_candidates：待搜索的第一、第二候选分差阈值。
     返回：
         未知误接受数最少、已知正确数最多的阈值结果。
     前置条件：
@@ -43,20 +43,22 @@ def calibrate_thresholds(
     """
 
     thresholds = sorted({float(value) for value in threshold_candidates})
-    margins = sorted({float(value) for value in margin_candidates})
-    if not records or not thresholds or not margins:
-        raise ValueError("records, threshold_candidates, and margin_candidates must not be empty")
+    score_gaps = sorted({float(value) for value in score_gap_candidates})
+    if not records or not thresholds or not score_gaps:
+        raise ValueError(
+            "records, threshold_candidates, and score_gap_candidates must not be empty"
+        )
 
     candidates: list[CalibrationResult] = []
     for threshold in thresholds:
-        for margin in margins:
+        for score_gap in score_gaps:
             unknown_false_accepts = 0
             known_correct = 0
             for record in records:
                 decision = decide_match(
                     record.person_scores,
                     match_threshold=threshold,
-                    min_margin=margin,
+                    min_score_gap=score_gap,
                 )
                 if record.expected_person_id is None:
                     unknown_false_accepts += int(decision.status == "matched")
@@ -65,7 +67,7 @@ def calibrate_thresholds(
             candidates.append(
                 CalibrationResult(
                     match_threshold=threshold,
-                    min_margin=margin,
+                    min_score_gap=score_gap,
                     unknown_false_accepts=unknown_false_accepts,
                     known_correct=known_correct,
                 )
@@ -77,6 +79,6 @@ def calibrate_thresholds(
             -item.unknown_false_accepts,
             item.known_correct,
             item.match_threshold,
-            item.min_margin,
+            item.min_score_gap,
         ),
     )

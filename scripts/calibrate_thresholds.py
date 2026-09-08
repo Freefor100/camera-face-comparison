@@ -69,20 +69,20 @@ def main() -> int:
     result = calibrate_thresholds(
         records=records,
         threshold_candidates=_values(30, 80),
-        margin_candidates=_values(0, 20),
+        score_gap_candidates=_values(0, 20),
     )
     settings = load_settings(args.data_dir)
     write_quality_tier_thresholds(
         settings,
         tier=args.quality_tier,
         match_threshold=result.match_threshold,
-        min_margin=result.min_margin,
+        min_score_gap=result.min_score_gap,
     )
     print(
         json.dumps(
             {
                 "match_threshold": result.match_threshold,
-                "min_margin": result.min_margin,
+                "min_score_gap": result.min_score_gap,
                 "quality_tier": args.quality_tier,
                 "unknown_false_accepts": result.unknown_false_accepts,
                 "known_correct": result.known_correct,

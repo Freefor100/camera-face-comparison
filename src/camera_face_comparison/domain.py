@@ -39,7 +39,7 @@ class RecognitionResult:
     person_id: str | None
     display_name: str | None
     top_score: float | None
-    runner_up_score: float | None
+    second_score: float | None
     latency_ms: float
     reason: str | None
     bbox: tuple[float, float, float, float] | None

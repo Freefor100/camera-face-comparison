@@ -92,19 +92,19 @@ def main() -> int:
     baseline, optimized = evaluate_experiments(
         records=records,
         match_threshold=settings.match_threshold,
-        min_margin=settings.min_margin,
+        min_score_gap=settings.min_score_gap,
         top_k=settings.top_k,
         quality_tiers=settings.quality_tiers,
     )
     report = {
         "parameters": {
             "match_threshold": settings.match_threshold,
-            "min_margin": settings.min_margin,
+            "min_score_gap": settings.min_score_gap,
             "top_k": settings.top_k,
             "quality_tiers": {
                 name: {
                     "match_threshold": policy.match_threshold,
-                    "min_margin": policy.min_margin,
+                    "min_score_gap": policy.min_score_gap,
                 }
                 for name, policy in settings.quality_tiers.items()
             },

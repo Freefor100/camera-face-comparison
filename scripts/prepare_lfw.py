@@ -10,6 +10,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.lfw_dataset import (
+    build_full_lfw_protocol,
     build_lfw_protocol,
     ensure_lfw_dataset,
     write_lfw_protocol,
@@ -27,19 +28,34 @@ def main() -> int:
     parser.add_argument("--unknown-identities", type=int, default=3)
     parser.add_argument("--enrollment-per-identity", type=int, default=5)
     parser.add_argument("--probes-per-identity", type=int, default=2)
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="include every LFW image by splitting all identities into known and unknown sets",
+    )
+    parser.add_argument("--known-fraction", type=float, default=0.8)
+    parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
     settings = load_settings(args.data_dir)
     try:
         dataset_dir = ensure_lfw_dataset(settings.data_dir, download=args.download)
-        protocol = build_lfw_protocol(
-            dataset_dir,
-            known_identity_count=args.known_identities,
-            unknown_identity_count=args.unknown_identities,
-            enrollment_per_identity=args.enrollment_per_identity,
-            probes_per_identity=args.probes_per_identity,
-        )
+        if args.full:
+            protocol = build_full_lfw_protocol(
+                dataset_dir,
+                known_fraction=args.known_fraction,
+                enrollment_per_identity=args.enrollment_per_identity,
+                seed=args.seed,
+            )
+        else:
+            protocol = build_lfw_protocol(
+                dataset_dir,
+                known_identity_count=args.known_identities,
+                unknown_identity_count=args.unknown_identities,
+                enrollment_per_identity=args.enrollment_per_identity,
+                probes_per_identity=args.probes_per_identity,
+            )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         print(str(error), file=sys.stderr)
         return 1
@@ -50,6 +66,7 @@ def main() -> int:
         json.dumps(
             {
                 "protocol": "lfw-open-set-v1",
+                "coverage": "full" if args.full else "pilot",
                 "output": str(output),
                 "enrolled_identities": len(protocol.enrollment),
                 "probes": len(protocol.probes),

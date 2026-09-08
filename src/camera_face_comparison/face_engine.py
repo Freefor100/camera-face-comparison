@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from .config import Settings
+from .runtime import ExecutionBackend, actual_backend_for_analyzer, detect_execution_backend
 
 
 class FaceInputError(ValueError):
@@ -34,6 +35,7 @@ class FaceEngine:
         *,
         analyzer: Any,
         blur_metric: Callable[[np.ndarray], float] | None = None,
+        backend: ExecutionBackend | None = None,
     ) -> None:
         """保存模型分析器和质量度量函数。
 
@@ -41,10 +43,14 @@ class FaceEngine:
             settings：当前质量门控配置。
             analyzer：提供 `get(frame)` 方法的 InsightFace 兼容分析器。
             blur_metric：可选的清晰度计算函数，未提供时使用拉普拉斯方差。
+            backend：创建分析器时使用的推理后端；直接注入分析器的测试默认按 CPU 标记。
         """
         self._settings = settings
         self._analyzer = analyzer
         self._blur_metric = blur_metric or _laplacian_variance
+        self._backend = backend or ExecutionBackend(
+            name="cpu", providers=("CPUExecutionProvider",), context_id=-1
+        )
 
     @classmethod
     def from_local_model(cls, settings: Settings) -> FaceEngine:
@@ -53,7 +59,7 @@ class FaceEngine:
         参数：
             settings：包含模型目录和日志目录的运行配置。
         返回：
-            已使用 CPU 推理提供器准备好的模型适配器。
+            已选择可用推理后端并准备好的模型适配器。
         前置条件：
             `data/models/buffalo_l` 必须已经存在，依赖包也必须已安装。
         """
@@ -68,6 +74,7 @@ class FaceEngine:
         matplotlib_cache = settings.logs_dir / "matplotlib"
         matplotlib_cache.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
+        backend = detect_execution_backend()
         try:
             from insightface.app import FaceAnalysis
         except ImportError as error:
@@ -77,10 +84,17 @@ class FaceEngine:
         analyzer = FaceAnalysis(
             name="buffalo_l",
             root=str(settings.data_dir),
-            providers=["CPUExecutionProvider"],
+            providers=list(backend.providers),
         )
-        analyzer.prepare(ctx_id=-1, det_size=(640, 640))
-        return cls(settings, analyzer=analyzer)
+        analyzer.prepare(ctx_id=backend.context_id, det_size=(640, 640))
+        actual_backend = actual_backend_for_analyzer(analyzer, backend)
+        return cls(settings, analyzer=analyzer, backend=actual_backend)
+
+    @property
+    def backend(self) -> ExecutionBackend:
+        """返回当前模型适配器实际选择的推理后端。"""
+
+        return self._backend
 
     def extract_faces(self, frame: np.ndarray) -> list[FaceObservation]:
         """把一张 BGR 图像中的所有检测结果转换为通用人脸观察对象。

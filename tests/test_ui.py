@@ -120,8 +120,8 @@ def test_stopping_preview_clears_the_last_camera_frame(tmp_path, qapplication) -
     window.close()
 
 
-def test_recognition_result_shows_candidate_gap(tmp_path, qapplication) -> None:
-    """主窗口应显示识别相似度、候选差距和耗时。"""
+def test_recognition_result_shows_score_gap(tmp_path, qapplication) -> None:
+    """主窗口应显示识别相似度、候选分差和耗时。"""
     settings = load_settings(tmp_path)
     window = MainWindow(
         settings=settings,
@@ -135,7 +135,7 @@ def test_recognition_result_shows_candidate_gap(tmp_path, qapplication) -> None:
             person_id="alice",
             display_name="Alice",
             top_score=0.72,
-            runner_up_score=0.61,
+            second_score=0.61,
             latency_ms=18.0,
             reason=None,
             bbox=None,
@@ -143,6 +143,6 @@ def test_recognition_result_shows_candidate_gap(tmp_path, qapplication) -> None:
     )
 
     assert "相似度 0.720" in window.result_label.text()
-    assert "候选差距 0.110" in window.result_label.text()
+    assert "候选分差 0.110" in window.result_label.text()
     assert "18 ms" in window.status_label.text()
     window.close()

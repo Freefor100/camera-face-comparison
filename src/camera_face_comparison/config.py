@@ -6,16 +6,16 @@ from pathlib import Path
 
 DEFAULT_CONFIG = """[recognition]
 match_threshold = 0.45
-min_margin = 0.05
+min_score_gap = 0.05
 top_k = 3
 
 [recognition.quality_tiers.high]
 match_threshold = 0.50
-min_margin = 0.05
+min_score_gap = 0.05
 
 [recognition.quality_tiers.medium]
 match_threshold = 0.60
-min_margin = 0.08
+min_score_gap = 0.08
 
 [quality]
 min_detection_score = 0.70
@@ -34,7 +34,7 @@ class QualityTierPolicy:
     """一个已通过质量检查的探针质量层级的开放集接收策略。"""
 
     match_threshold: float
-    min_margin: float
+    min_score_gap: float
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,7 @@ class Settings:
     models_dir: Path
     logs_dir: Path
     match_threshold: float
-    min_margin: float
+    min_score_gap: float
     top_k: int
     quality_tiers: dict[str, QualityTierPolicy]
     min_detection_score: float
@@ -100,7 +100,7 @@ def load_settings(data_dir: Path) -> Settings:
         models_dir=models_dir,
         logs_dir=logs_dir,
         match_threshold=float(recognition["match_threshold"]),
-        min_margin=float(recognition["min_margin"]),
+        min_score_gap=float(recognition["min_score_gap"]),
         top_k=int(recognition["top_k"]),
         quality_tiers=quality_tiers,
         min_detection_score=float(quality["min_detection_score"]),
@@ -118,23 +118,23 @@ def write_recognition_thresholds(
     settings: Settings,
     *,
     match_threshold: float,
-    min_margin: float,
+    min_score_gap: float,
 ) -> None:
     """保存整体识别阈值，同时保留当前两个质量层级的策略。
 
     参数：
         settings：当前运行配置。
         match_threshold：最高候选得分阈值。
-        min_margin：第一、第二候选的最小分差。
+        min_score_gap：第一、第二候选的最小分差。
     前置条件：
         两个阈值都必须位于 `[0, 1]`。
     """
 
-    _validate_thresholds(match_threshold, min_margin)
+    _validate_thresholds(match_threshold, min_score_gap)
     _write_settings_file(
         settings,
         match_threshold=match_threshold,
-        min_margin=min_margin,
+        min_score_gap=min_score_gap,
         quality_tiers=settings.quality_tiers,
     )
 
@@ -144,7 +144,7 @@ def write_quality_tier_thresholds(
     *,
     tier: str,
     match_threshold: float,
-    min_margin: float,
+    min_score_gap: float,
 ) -> None:
     """保存一个探针质量层级的标定结果，不改变另一个层级的策略。
 
@@ -152,22 +152,22 @@ def write_quality_tier_thresholds(
         settings：当前运行配置。
         tier：要更新的质量层级，目前为 `high` 或 `medium`。
         match_threshold：该层级的最高候选得分阈值。
-        min_margin：该层级的最小候选分差。
+        min_score_gap：该层级的最小候选分差。
     前置条件：
         层级必须存在，且两个阈值都必须位于 `[0, 1]`。
     """
 
     if tier not in settings.quality_tiers:
         raise ValueError(f"unknown quality tier: {tier}")
-    _validate_thresholds(match_threshold, min_margin)
+    _validate_thresholds(match_threshold, min_score_gap)
     quality_tiers = {
         **settings.quality_tiers,
-        tier: QualityTierPolicy(match_threshold=match_threshold, min_margin=min_margin),
+        tier: QualityTierPolicy(match_threshold=match_threshold, min_score_gap=min_score_gap),
     }
     _write_settings_file(
         settings,
         match_threshold=settings.match_threshold,
-        min_margin=settings.min_margin,
+        min_score_gap=settings.min_score_gap,
         quality_tiers=quality_tiers,
     )
 
@@ -176,7 +176,7 @@ def _write_settings_file(
     settings: Settings,
     *,
     match_threshold: float,
-    min_margin: float,
+    min_score_gap: float,
     quality_tiers: dict[str, QualityTierPolicy],
 ) -> None:
     """按当前完整字段重写配置文件，不保留旧配置字段。"""
@@ -187,16 +187,16 @@ def _write_settings_file(
             (
                 "[recognition]",
                 f"match_threshold = {match_threshold:.6f}",
-                f"min_margin = {min_margin:.6f}",
+                f"min_score_gap = {min_score_gap:.6f}",
                 f"top_k = {settings.top_k}",
                 "",
                 "[recognition.quality_tiers.high]",
                 f"match_threshold = {high_tier.match_threshold:.6f}",
-                f"min_margin = {high_tier.min_margin:.6f}",
+                f"min_score_gap = {high_tier.min_score_gap:.6f}",
                 "",
                 "[recognition.quality_tiers.medium]",
                 f"match_threshold = {medium_tier.match_threshold:.6f}",
-                f"min_margin = {medium_tier.min_margin:.6f}",
+                f"min_score_gap = {medium_tier.min_score_gap:.6f}",
                 "",
                 "[quality]",
                 f"min_detection_score = {settings.min_detection_score:.6f}",
@@ -214,17 +214,17 @@ def _write_settings_file(
     )
 
 
-def _validate_thresholds(match_threshold: float, min_margin: float) -> None:
+def _validate_thresholds(match_threshold: float, min_score_gap: float) -> None:
     """检查识别阈值是否位于合法的闭区间 `[0, 1]`。"""
     if not 0.0 <= match_threshold <= 1.0:
         raise ValueError("match_threshold must be between 0 and 1")
-    if not 0.0 <= min_margin <= 1.0:
-        raise ValueError("min_margin must be between 0 and 1")
+    if not 0.0 <= min_score_gap <= 1.0:
+        raise ValueError("min_score_gap must be between 0 and 1")
 
 
 def _read_tier(raw_tier: dict[str, object]) -> QualityTierPolicy:
     """把 TOML 中的一个质量层级配置转换为类型化策略对象。"""
     return QualityTierPolicy(
         match_threshold=float(raw_tier["match_threshold"]),
-        min_margin=float(raw_tier["min_margin"]),
+        min_score_gap=float(raw_tier["min_score_gap"]),
     )

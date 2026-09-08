@@ -2,7 +2,7 @@
 
 离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序从外置摄像头或本地图片读取人脸，在本地标准库中检索已录入人员；证据不足时输出“未知人员”，不会强行给出姓名。
 
-当前版本先保证主链路可运行，再按阶段完成算法比较、数据标定、鲁棒性优化和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [docs/任务书要求提取.md](docs/任务书要求提取.md)，需求分析见 [docs/需求分析.md](docs/需求分析.md)。
+当前版本先保证主链路可运行，再按依赖顺序完成质量验证、联合标定、鲁棒性扩展和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，当前实验见 [Phase 2 设计](docs/phase-2-design.md)与 [Phase 2 结果](docs/phase-2-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
 
 ## 项目目标
 
@@ -19,11 +19,11 @@
 | --- | --- | --- |
 | 外置摄像头实时采集与拍照 | 已实现跨平台设备扫描、预览线程、停止清屏和抓拍入口 | **Phase 1 真实硬件链路已通过** |
 | 不少于 3 个身份的标准库 | 已实现人员、图片和 embedding 的持久化；尚未建立最终 Demo Gallery | **代码已实现；最终数据待 Phase 6** |
-| 姓名/未知人员判别 | 已实现单脸检查、1:N 打分、阈值和候选差距拒识 | **代码已实现；需要数据标定** |
+| 姓名/未知人员判别 | 已实现单脸检查、1:N 打分、阈值和候选分差拒识 | **代码已实现；需要数据标定** |
 | 系统 UI | 已实现识别页、标准库页、状态和异常反馈 | **Phase 1 功能链路已通过；视觉收尾在 Phase 5** |
 | 标准库动态扩容 | 已实现本地图片和当前画面新增、追加及重启恢复 | **Phase 1 完整链路已通过** |
 | 扩展优化功能 | 计划实现“短时间窗口多帧采集 + 质量择优”和端到端时间优化，并分别保留基线对比 | **尚未完成扩展** |
-| 优化前后对比证据 | 已有实验脚本和 LFW 小样本烟雾测试，但没有正式标定/独立评测结果 | **需要数据标定与鲁棒性实验** |
+| 优化前后对比证据 | 已固定 LFW 分区和 23,052 条无阈值方法分数；尚未完成质量门、联合标定和扩展复测 | **Phase 2 已完成；Phase 3～5 待做** |
 
 “代码已实现”只说明相应路径存在且自动化测试通过，不等于已经完成真实摄像头、正式数据集或现场条件验收。
 
@@ -31,14 +31,14 @@
 
 - 以 Python 源码项目运行，不制作 EXE；推荐 Python 3.11–3.13。
 - PySide6 提供桌面 UI，OpenCV 负责摄像头和图片读写。
-- InsightFace `buffalo_l` 与 ONNX Runtime CPU 提取人脸 embedding，模型从本地 `data/models/` 加载。
+- InsightFace `buffalo_l` 与 ONNX Runtime 提取人脸 embedding；Linux 上自动优先使用 CUDA，实际 CUDA session 不可用时回退 CPU。模型从本地 `data/models/` 加载。
 - 摄像头帧和本地图片使用同一套检测、质量检查、特征提取和识别服务。
 - 创建人员时必须同时提供至少一张有效图片；人员和首批样本原子写入后立即参与识别。没有固定姿态、动作或图片数量要求。
 - 同一人员可以继续追加多张样本。当前查询时与库中所有人员的所有样本比对，再按人员进行 Top-K 质量加权聚合。
 - SQLite 保存人员、embedding、质量元数据和识别日志；样本原图保存在 `data/faces/`。
 - 图片与向量分别记录 SHA-256，用于发现文件缺失、误覆盖或向量 BLOB 被改写。
-- 默认阈值只是初始运行参数，尚未使用独立 Calibration/Evaluation 分区标定，不能当作最终最优参数。
-- 当前 LFW pilot 只证明数据集下载、协议生成、真实模型提取和指标导出链路能运行，不作为正式效果结论。
+- 默认阈值和当前质量加权聚合只是运行中的初始策略，尚未经过质量规则冻结和联合标定，不能当作最终最优方案。
+- Phase 2 已在质量过滤前固定身份互斥的 Calibration/Evaluation，并从现有 LFW 缓存保存 3,842 张有效 Probe 的六种无阈值聚合结果；当前固定阈值结果只保留为历史诊断。详见 [数据集评测记录](docs/dataset-evaluation.md)。
 
 ## 阶段 TODO
 
@@ -61,38 +61,43 @@
 - [x] 验证关闭数据库后重开，人员、样本、完整性状态和识别链路仍然正常。
 - [x] 记录问题清单；这些临时身份和结果不进入最终验收数据。
 
-### Phase 2：算法基线
+### Phase 2：固定评测数据和无阈值结果（已完成）
 
-- [ ] 统一 Gallery、Known Probe、Unknown Probe 的数据流和结果格式。
-- [ ] 实现并比较 Single、Max、Mean Prototype 和当前 Top-K 聚合。
-- [ ] 明确区分 Unknown、Low Quality、FTE/FTA 和系统错误。
-- [ ] 固定可回放的输入与指标，避免不同算法使用不同样本。
+- [x] 使用 LFW 全量源协议固定 Gallery、Known Probe 和 Unknown Probe。
+- [x] 在质量过滤前按身份固定 Calibration/Evaluation；同一 Known 或 Unknown 来源身份不跨分区。
+- [x] 拆分 `embedding_extraction_id` 与 `decision_policy_id`，判定参数变化不再使 embedding 缓存失效。
+- [x] 从现有 8,577 条有效缓存生成 3,842 张有效 Probe 的无阈值结果，不重新运行 InsightFace。
+- [x] 保存 Single、Max、Mean Prototype、Top-K Mean K=2/3/5，共 23,052 条第一/第二候选分数。
+- [x] 保存 1,901 条 Probe 与 2,755 条 Gallery 拒绝记录、协议哈希、质量配置和代码版本。
+- [x] 将固定阈值全量结果降级为历史诊断，不据此选择最终方法。
+- [x] 固化开放集识别、模板聚合、FIQA 和大规模检索的技术调研及项目简化边界。
 
-### Phase 3：数据集调参
+### Phase 3：质量门与入库拒绝规则验证
 
-- [ ] 先用与桌面摄像头条件接近的开发图片建立 Gallery、Known Probe、Unknown Probe 和 Calibration 分区。
-- [ ] 用 Calibration 标定身份匹配阈值及确有必要的候选参数。
-- [ ] 使用身份隔离、未参与调参的 Open-set Evaluation 分区复测。
-- [ ] 输出 TPIR、FPIR、FNIR、Rank-1、FTE、FTA 和端到端耗时。
-- [ ] 保存协议、参数、逐样本结果和可复现命令。
-- [ ] LFW 继续用于链路和算法烟雾测试；XQLFW 只补充跨质量诊断；QMUL-SurvFace 只作为极端监控场景压力测试，不直接决定摄像头场景阈值。
+- [ ] 固定 300 个同时具有有效 Gallery 与 Probe 的 LFW 身份，分别改变 Probe 和入库参考图。
+- [ ] 单因素测试人脸尺寸、模糊、亮度和对比度，不制造全因素笛卡尔组合。
+- [ ] 记录检测成功率/FTE、质量拒绝率、同人相似度、Rank-1/TPIR、Unknown FPIR 和低质量参考图影响。
+- [ ] 从实际指标断点比较硬门候选值，量化“错误减少量”和“额外拒绝量”。
+- [ ] 检查启发式 `quality_score` 与识别错误的单调关系及 Error-versus-Reject 曲线。
+- [ ] 冻结质量规则；无证据的软质量加权不进入主算法。
 
-### Phase 4：鲁棒性优化
+### Phase 4：聚合方法与开放集判定联合标定
 
-- [ ] 在正常光、可恢复的暗光、轻中度侧脸、轻度运动模糊和距离变化下建立可重复的摄像头测试样本；复杂背景主要检查检测框和多人脸处理。
-- [ ] 完成鲁棒性扩展：在短时间窗口内采集多帧，通过现有质量指标选择较可靠的帧，再进入识别。
-- [ ] 以单帧抓拍作为基线，在相同人员、场景和阈值下比较多帧方案的成功率、拒识率与耗时。
-- [ ] 完成端到端时间优化：记录输入准备、检测、质量检查、特征提取、标准库检索、判定、日志和界面反馈的总耗时，优化主要耗时环节。
-- [ ] 在相同硬件、模型、Gallery、阈值和测试数据下比较优化前后的分阶段耗时与总耗时。
-- [ ] 时间允许时，再比较 Mean Prototype、当前 Top-K 和简单 Quality-aware Prototype；没有完整实验就不加入最终功能声明。
-- [ ] 保存逐样本结果、失败样例、优化收益和时间代价，形成任务书要求的“优化前—优化后”证据。
+- [ ] 在相同 Calibration 上比较六种聚合方法，各自包含“仅匹配阈值”和“匹配阈值 + 候选分差”，共 12 组。
+- [ ] 使用实际 `top_score` / `score_gap` 断点精确扫描，不用反向传播或固定 0.01 网格。
+- [ ] 报告 `FPIR ≤ 1%`、主工作点 `FPIR ≤ 0.3%` 和 Calibration 观测 `FPIR = 0%`。
+- [ ] 满足 FPIR 后最大化 TPIR/Rank-1；同效时优先不使用候选分差和更紧凑、低开销的方法。
+- [ ] 只将选定方案用于独立 Evaluation 一次，输出 FPIR、FNIR、TPIR、Rank-1 和有效分母。
+- [ ] 使用非最终演示人员的摄像头开发样本复核桌面域；只有明确域偏移才重新标定部署阈值。
 
-### Phase 5：参数冻结与 UI 收尾
+### Phase 5：鲁棒性扩展、耗时与 UI 收尾
 
-- [ ] 冻结模型版本、人员表示、质量规则、阈值和运行配置。
-- [ ] 完成 UI 视觉、状态反馈和错误提示收尾。
-- [ ] 补齐操作说明、数据目录复制、故障排查和跨平台检查。
-- [ ] 冻结后不再使用最终 Demo Gallery 反向调参。
+- [ ] 使用 XQLFW 分析真实跨质量退化，使用 QMUL-SurvFace 记录监控小脸域覆盖限制。
+- [ ] 实现“短时间多帧采集 + 质量择优”，以单帧为基线做相同人员、场景、方法和阈值的复测。
+- [ ] 记录输入、检测、特征、检索、判定、日志和 UI 的分阶段及 E2E 耗时，只优化实测瓶颈。
+- [ ] 若 Phase 3 证明质量分有效，再把简单质量加权作为扩展消融；否则不保留软加权。
+- [ ] 完成 UI 视觉、状态反馈、操作说明、故障排查和跨平台收尾。
+- [ ] 冻结模型、质量门、聚合方法和判定参数。
 
 ### Phase 6：最终 Demo Gallery 与验收
 
@@ -102,7 +107,7 @@
 - [ ] 演示动态新增身份、追加样本、重启恢复和离线运行。
 - [ ] 最终 Demo Gallery 不参与前面的阈值标定或鲁棒性调参。
 
-公开数据集只用于开发阶段的算法选择、调参和独立评测。最终 Demo Gallery 要等算法、阈值和鲁棒性方案冻结后再建立，不能提前混入开发数据或调参过程。
+LFW 用于 Phase 2 固定分数、Phase 3 质量验证和 Phase 4 联合标定；XQLFW 与 QMUL 主要用于 Phase 5 鲁棒性和极端域压力分析，不直接决定桌面应用阈值。最终 Demo Gallery 要等模型、质量规则、聚合和阈值冻结后再建立。
 
 ## 可实现优化与系统局限性
 
@@ -119,21 +124,31 @@
 
 ## 安装
 
-Windows、Linux、macOS 均使用独立虚拟环境。Linux/macOS 示例：
+Windows、Linux、macOS 均使用独立虚拟环境。必须明确选择 CPU 或 GPU 后端，不能同时安装两个 ONNX Runtime 包。
+
+Linux/macOS 使用 CPU：
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[cpu,dev,evaluation]"
 ```
+
+Linux（NVIDIA GPU）使用 GPU：
+
+```bash
+python -m pip install -e ".[gpu,dev,evaluation]"
+```
+
+程序启动时会检查 InsightFace session 的实际 provider；评测 JSON 的 `execution_backend` 字段是最终依据，不以 `nvidia-smi` 或 provider 列表单独判断。
 
 Windows PowerShell 激活命令：
 
 ```powershell
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[cpu,dev,evaluation]"
 ```
 
 在能联网的开发机器准备一次模型：
@@ -178,13 +193,13 @@ sim(q, e) = q · e
 1. Query 与该人员的所有样本分别计算相似度。
 2. 选择分数最高的 Top-K 个样本；样本少于 K 时使用全部样本。
 3. 按入库质量分数加权，得到该人员的候选分数。
-4. 对所有人员排序，检查最佳分数阈值和第一/第二候选差距。
+4. 对所有人员排序，检查最佳分数阈值和第一/第二候选分差。
 
 只有两项都满足时才输出姓名：
 
 ```text
 最佳人员分数 >= 当前探针质量等级的 match_threshold
-最佳人员分数 - 第二人员分数 >= 当前探针质量等级的 min_margin
+最佳人员分数 - 第二人员分数 >= 当前探针质量等级的 min_score_gap
 ```
 
 只有一个候选人员时没有第二名，只检查匹配阈值。无人脸、多人脸、脸过小、明显模糊或质量等级为 `reject` 时不会进入身份打分。
@@ -196,8 +211,10 @@ data/
 ├─ config.toml                    # 识别阈值和质量规则
 ├─ face_library.sqlite            # 人员、向量、质量元数据、识别日志
 ├─ faces/<person-id>/             # 已入库样本图片
+├─ demo-candidates/<person-id>/   # 最终演示候选，当前不进入数据库
 ├─ models/buffalo_l/              # 离线 ONNX 模型
 ├─ datasets/                      # 开发数据集、协议（可选）
+├─ experiments/phase2/            # 固定分区和无阈值实验分数
 └─ logs/                          # 评分记录和实验报告
 ```
 
@@ -207,9 +224,9 @@ SHA-256 检查针对已入库参考图片和 SQLite 中的 embedding BLOB，不�
 
 `data/` 被 Git 忽略，可能包含人脸图片、模型和实验数据。
 
-## 当前 LFW 烟雾测试
+## 当前数据集评测入口
 
-现有脚本可下载 LFW、生成一个小型开放集协议并验证真实模型链路：
+现有脚本保留小型 LFW pilot 和固定阈值全量报告作为历史诊断。正式后续输入是 Phase 2 保存的固定分区与无阈值 SQLite；XQLFW 和 QMUL-SurvFace 入口留给 Phase 5。所有产物均在被 Git 忽略的 `data/` 下。
 
 ```bash
 python scripts/prepare_lfw.py --data-dir ./data --download \
@@ -219,7 +236,37 @@ python scripts/prepare_lfw.py --data-dir ./data --download \
 python scripts/evaluate_lfw.py --data-dir ./data --min-face-size 80
 ```
 
-输出包括逐 Probe 分数和汇总指标。该 pilot 没有独立的 Calibration/Open-set Evaluation 身份划分，样本量也不足，因此只作为链路烟雾测试。正式阈值和鲁棒性结论必须等 Phase 3、Phase 4 完成后再给出。
+全量 LFW 协议覆盖本地 LFW 的每张图片：
+
+```bash
+python scripts/prepare_lfw.py --data-dir ./data --full \
+  --known-fraction 0.8 --enrollment-per-identity 5 --seed 2026 \
+  --output ./data/datasets/lfw_full_open_set_protocol.json
+python scripts/evaluate_lfw.py --data-dir ./data --stream \
+  --protocol ./data/datasets/lfw_full_open_set_protocol.json \
+  --min-face-size 80 \
+  --cache-path ./data/logs/cache/lfw.sqlite \
+  --report-output ./data/logs/lfw_full_algorithm_baseline.json
+
+python scripts/export_lfw_decision_scores.py \
+  --data-dir ./data \
+  --source-protocol ./data/datasets/lfw_full_open_set_protocol.json \
+  --cache-path ./data/logs/cache/lfw.sqlite \
+  --output-dir ./data/experiments/phase2 \
+  --min-face-size 80
+```
+
+XQLFW 使用官方 6,000 对及其涉及的全部图片；QMUL 使用官方 Gallery、Mated Probe 和 Unmated Probe：
+
+```bash
+python scripts/evaluate_xqlfw.py --data-dir ./data --min-face-size 80 \
+  --cache-path ./data/logs/cache/xqlfw.sqlite
+python scripts/prepare_qmul.py --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
+python scripts/evaluate_qmul.py --data-dir ./data \
+  --cache-path ./data/logs/cache/qmul_survface.sqlite
+```
+
+这些结果必须分别记录图片覆盖数、质量拒绝数、有效分母、协议和耗时。正式质量规则、开放集阈值和鲁棒性结论分别要等 Phase 3、Phase 4 和 Phase 5 完成。
 
 ## 测试
 
