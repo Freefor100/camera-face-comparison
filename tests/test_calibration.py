@@ -43,17 +43,17 @@ def test_score_gap_can_reject_a_close_unknown_without_raising_match_threshold() 
 
     assert threshold_only.known_true_accepts == 0
     assert with_gap.meets_target
-    assert with_gap.match_threshold == 0.0
+    assert with_gap.match_threshold == -1.0
     assert with_gap.min_score_gap == 0.30
     assert with_gap.known_true_accepts == 1
 
 
 def test_scan_marks_unsatisfied_target_when_bounded_scores_cannot_reject_unknown() -> None:
-    """若分数和分差都等于一，合法闭区间内不能伪造零 FPIR 工作点。"""
+    """若分数和分差都达到合法上限，扫描器不能伪造零 FPIR 工作点。"""
 
     rows = (
         DecisionScoreRow("alice", 0.90, 0.50, True),
-        DecisionScoreRow(None, 1.00, 1.00, False),
+        DecisionScoreRow(None, 1.00, 2.00, False),
     )
 
     point = calibrate_method(rows, target_fpir=0.0, use_score_gap=True)
@@ -61,6 +61,21 @@ def test_scan_marks_unsatisfied_target_when_bounded_scores_cannot_reject_unknown
     assert not point.meets_target
     assert point.unknown_false_accepts == 1
     assert point.fpir == 1.0
+
+
+def test_scan_accepts_negative_cosine_top_scores() -> None:
+    """余弦相似度允许为负数，扫描器不能误当成非法概率值。"""
+
+    rows = (
+        DecisionScoreRow("alice", -0.10, 0.30, True),
+        DecisionScoreRow(None, -0.40, 0.05, False),
+    )
+
+    point = calibrate_method(rows, target_fpir=0.0, use_score_gap=False)
+
+    assert point.match_threshold == -0.10
+    assert point.known_true_accepts == 1
+    assert point.unknown_false_accepts == 0
 
 
 def test_global_selection_prefers_tpir_then_simpler_rule() -> None:

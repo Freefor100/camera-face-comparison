@@ -108,7 +108,7 @@ def calibrate_method(
     返回：
         优先满足 FPIR、再最大化 Known TPIR 的工作点。
     前置条件：
-        必须同时包含 Known 和 Unknown；分数及分差位于闭区间 `[0, 1]`。
+        必须同时包含 Known 和 Unknown；余弦分数位于 `[-1, 1]`，分差位于 `[0, 2]`。
 
     判定只会在已有 `top_score` 或 `score_gap` 断点处变化，因此无需反向传播、
     固定网格或粗搜后细搜。二维规则通过离散直方图的后缀累计精确计算。
@@ -131,9 +131,9 @@ def calibrate_method(
     if known_total == 0 or unknown_total == 0:
         raise ValueError("calibration requires both Known and Unknown rows")
 
-    thresholds = np.unique(np.concatenate((np.array([0.0, 1.0]), top_scores)))
+    thresholds = np.unique(np.concatenate((np.array([-1.0, 1.0]), top_scores)))
     gaps = (
-        np.unique(np.concatenate((np.array([0.0, 1.0]), score_gaps)))
+        np.unique(np.concatenate((np.array([0.0, 2.0]), score_gaps)))
         if use_score_gap
         else np.array([0.0])
     )
@@ -446,9 +446,9 @@ def _validate_rows(rows: Sequence[DecisionScoreRow]) -> None:
     """拒绝超出余弦得分和候选分差合法范围的实验数据。"""
 
     for row in rows:
-        if not 0.0 <= row.top_score <= 1.0:
-            raise ValueError("top_score must be between zero and one")
-        if not 0.0 <= row.score_gap <= 1.0:
-            raise ValueError("score_gap must be between zero and one")
+        if not -1.0 <= row.top_score <= 1.0:
+            raise ValueError("top_score must be between minus one and one")
+        if not 0.0 <= row.score_gap <= 2.0:
+            raise ValueError("score_gap must be between zero and two")
         if row.expected_person_id is None and row.top_is_correct:
             raise ValueError("Unknown row cannot have a correct Gallery identity")
