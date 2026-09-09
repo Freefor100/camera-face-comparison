@@ -130,7 +130,7 @@ def extract_dataset_raw_embeddings(
     )
 
 
-def extract_lfw_protocol_raw_embeddings(
+def extract_identification_protocol_raw_embeddings(
     *,
     dataset_dir: Path,
     protocol: LfwProtocol,
@@ -139,7 +139,11 @@ def extract_lfw_protocol_raw_embeddings(
     commit_every: int = 100,
     on_progress: Callable[[int, int, str, bool], None] | None = None,
 ) -> RawExtractionSummary:
-    """提取 LFW Gallery 与 Probe 引用的全部去重图片。"""
+    """提取一个 Gallery/Probe 身份识别协议引用的全部去重图片。
+
+    `LfwProtocol` 在项目中同时承载 LFW 和 QMUL-SurvFace 的开放集协议结构；
+    本函数不依赖具体数据集，也不执行质量拒绝或身份判定。
+    """
 
     relative_paths = (
         *(path for paths in protocol.enrollment.values() for path in paths),
