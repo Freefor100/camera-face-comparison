@@ -64,7 +64,9 @@
 ### Task 3：实现单因素退化和可恢复原始测量缓存
 
 **Files:**
-- Modify: `src/camera_face_comparison/quality_experiment.py`
+- Create: `src/camera_face_comparison/quality_degradation.py`
+- Create: `src/camera_face_comparison/quality_experiment_store.py`
+- Create: `src/camera_face_comparison/quality_experiment_runner.py`
 - Create: `scripts/run_quality_experiment.py`
 - Modify: `tests/test_quality_experiment.py`
 
@@ -74,11 +76,11 @@
 - Produces: `select_primary_face(faces) -> FaceObservation`，仅用于已知单主体数据集，按人脸面积、中心距离和检测分数确定主脸。
 - Produces: `QualityExperimentStore`，以图片路径、文件 SHA-256、退化条件和 `embedding_extraction_id` 为键保存 embedding、原始指标、检测数量、耗时或 FTE 原因。
 
-- [ ] 写失败测试，分别验证高斯模糊、亮度、对比度和固定画布人脸尺寸退化只改变指定因素。
-- [ ] 写失败测试，验证缓存重开后不重复调用 fake engine，图片哈希或提取标识变化时失效。
-- [ ] 实现退化条件：人脸目标尺寸 `160/112/96/80/64/48 px`，高斯模糊 `σ=0/1/2/3/4`，亮度倍率 `1.0/0.75/0.50/0.35/1.25/1.50`，对比度倍率 `1.0/0.75/0.50/0.25`；重复基线只运行一次。
-- [ ] 实现按批提交、进度输出和中断恢复；运行时记录实际 CUDA/CPU provider。
-- [ ] 运行针对性测试并提交：`feat: add recoverable face quality degradation experiment`。
+- [x] 写失败测试，分别验证高斯模糊、亮度、对比度和固定画布人脸尺寸退化只改变指定因素。
+- [x] 写失败测试，验证缓存重开后不重复调用 fake engine，图片哈希或提取标识变化时失效。
+- [x] 实现退化条件：人脸目标尺寸 `160/112/96/80/64/48 px`，高斯模糊 `σ=0/1/2/3/4`，亮度倍率 `1.0/0.75/0.50/0.35/1.25/1.50`，对比度倍率 `1.0/0.75/0.50/0.25`；重复基线只运行一次。
+- [x] 实现按批提交、进度输出和中断恢复；运行时记录实际 CUDA/CPU provider。
+- [x] 运行针对性测试并提交：`feat: add recoverable face quality degradation experiment`。
 
 ### Task 4：生成质量证据和冻结建议
 
