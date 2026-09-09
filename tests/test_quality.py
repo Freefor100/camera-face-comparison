@@ -149,6 +149,7 @@ def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeyp
         "CUDAExecutionProvider",
         "CPUExecutionProvider",
     ]
+    assert FakeAnalysis.last_kwargs["allowed_modules"] == ["detection", "recognition"]
     assert FakeAnalysis.last_prepare_kwargs["ctx_id"] == 0
 
 

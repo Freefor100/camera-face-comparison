@@ -85,6 +85,7 @@ class FaceEngine:
             name="buffalo_l",
             root=str(settings.data_dir),
             providers=list(backend.providers),
+            allowed_modules=["detection", "recognition"],
         )
         analyzer.prepare(ctx_id=backend.context_id, det_size=(640, 640))
         actual_backend = actual_backend_for_analyzer(analyzer, backend)
