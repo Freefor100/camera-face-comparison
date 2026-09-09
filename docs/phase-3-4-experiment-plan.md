@@ -54,12 +54,12 @@
 - Produces: `build_quality_experiment_protocol(split_protocol, decision_scores_path, unknown_count=300, seed=2026)`。
 - Produces: `write_quality_experiment_protocol()` / `read_quality_experiment_protocol()`。
 
-- [ ] 写失败测试，使用小型协议和分数库验证只读取 Calibration、Known/Unknown 身份不重叠、固定种子可复现。
-- [ ] 运行 `pytest tests/test_quality_experiment.py -v`，确认因模块不存在而失败。
-- [ ] 实现协议构建，Known 每个身份固定选择一张已通过 Phase 2 的 Probe；Unknown 每个来源身份最多选择一张。
-- [ ] CLI 生成 `data/experiments/phase3/protocol.json` 并记录源协议哈希。
-- [ ] 运行针对性测试和真实协议生成命令，核对 Known=116、Unknown=300。
-- [ ] 提交：`feat: add fixed quality experiment protocol`。
+- [x] 写失败测试，使用小型协议和分数库验证只读取 Calibration、Known/Unknown 身份不重叠、固定种子可复现。
+- [x] 运行 `pytest tests/test_quality_experiment.py -v`，确认因模块不存在而失败。
+- [x] 实现协议构建，Known 每个身份固定选择一张已通过 Phase 2 的 Probe；Unknown 每个来源身份最多选择一张。
+- [x] CLI 生成 `data/experiments/phase3/protocol.json` 并记录源协议哈希。
+- [x] 运行针对性测试和真实协议生成命令，核对 Known=116、Unknown=300。
+- [x] 提交：`feat: add fixed quality experiment protocol`。
 
 ### Task 3：实现单因素退化和可恢复原始测量缓存
 
