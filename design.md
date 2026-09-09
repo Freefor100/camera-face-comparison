@@ -205,7 +205,7 @@ Phase 4 新增 `scripts/extract_lfw_raw_embeddings.py` 和 `RawEmbeddingCache`�
 
 `scripts/export_lfw_decision_scores.py` 是原始缓存的 cache-only 导出入口，不导入或初始化 `FaceEngine`。它从已有缓存生成六种人员聚合：Single、Max、Mean Prototype、Top-K Mean K=2/3/5。Top-K Mean 是普通平均，不读取质量权重。每张有效 Probe 保存第一候选、`top_score`、第二候选、`second_score`、`score_gap`、真实标签、原始质量指标和评分耗时；模型 FTE 另表保存原因。分数表不保存质量等级、匹配阈值或最小候选分差。
 
-本机 Phase 2 历史 `decision_scores.sqlite` 由质量筛选缓存生成：4,735 张有效 Gallery、3,842 张有效 Probe、1,901 张 Probe 拒绝，六种方法共 23,052 条分数记录。Phase 4 原始缓存及新分数库使用独立目录，防止历史诊断覆盖最终实验输入。
+本机 Phase 2 历史 `decision_scores.sqlite` 由质量筛选缓存生成：4,735 张有效 Gallery、3,842 张有效 Probe、1,901 张 Probe 拒绝，六种方法共 23,052 条分数记录。Phase 4 的 CUDA 原始提取覆盖 13,233 张 LFW：13,185 张得到 embedding、48 张 FTE；其中 2,236 张检测到多个候选但按主体脸规则保留。新分数库包含 7,465 张有效 Gallery、5,720 张有效 Probe和 34,320 条六方法记录，使用独立目录，防止历史诊断覆盖正式实验输入。
 
 历史流式报告仍会在给定固定阈值下输出 FPIR/FNIR，但这类结果被标记为历史诊断。项目还已有 XQLFW 官方 pairs 解析、QMUL-SurvFace 官方 MAT 协议解析和相应评测入口；它们不会被 Phase 2 cache-only 导出调用。
 
@@ -216,8 +216,10 @@ Phase 4 新增 `scripts/extract_lfw_raw_embeddings.py` 和 `RawEmbeddingCache`�
 - 只使用 `match_threshold`；
 - 同时使用 `match_threshold` 和 `min_score_gap`。
 
-候选值来自 Calibration 中实际出现的 `top_score` 和 `score_gap` 断点，并补充合法边界 0 和 1。二维规则先建立“最高分断点 × 候选分差断点”的离散计数，再用后缀累计一次得到所有组合的接收数量，不按 0.01 网格近似，也不需要反向传播。
+候选值来自 Calibration 中实际出现的 `top_score` 和 `score_gap` 断点，并补充余弦分数 `[-1, 1]` 与分差 `[0, 2]` 的合法边界。二维规则先建立“最高分断点 × 候选分差断点”的离散计数，再用后缀累计一次得到所有组合的接收数量，不按 0.01 网格近似，也不需要反向传播。
 
-扫描器分别输出 FPIR 不超过 1%、0.3% 和观测 0% 的工作点。每个工作点记录匹配阈值、是否启用候选分差、Known Rank-1、TPIR、FNIR、Unknown 误接收数和 FPIR；若闭区间内没有组合达到目标，会明确标记 `meets_target=false`。`evaluate_operating_point()` 只有被显式调用时才会把已经选定的参数应用到 Evaluation。
+扫描器分别输出 FPIR 不超过 1%、0.3% 和观测 0% 的工作点。每个工作点记录匹配阈值、是否启用候选分差、Known Rank-1、TPIR、FNIR、Unknown 误接收数和 FPIR；若闭区间内没有组合达到目标，会明确标记 `meets_target=false`。
 
-当前扫描器已经对 Phase 2 历史质量策略下的分数做过预演，但该分数库被启发式质量门提前筛选，不能作为最终参数。应用配置尚未被扫描结果修改。
+`select_best_operating_point()` 只接收 Calibration 报告，按“满足 FPIR、最大 TPIR、不使用分差、模板紧凑和检索开销”顺序选出唯一候选。`scripts/evaluate_selected_operating_point.py` 在选择完成后才调用 `evaluate_operating_point()` 读取 Evaluation，并把选择和评估一起原子写入 JSON。
+
+本机自然 LFW 实验在主目标 `FPIR≤0.3%` 下选出 Mean Prototype 与候选分差规则：Calibration 为 FPIR 0.244%、TPIR 61.49%，独立 Evaluation 为 FPIR 0.252%、TPIR 48.45%、Rank-1 98.60%。这是 4,599 身份 LFW Gallery 下的候选；当前桌面应用仍使用原有质量加权 Top-K 和初始质量层参数，尚未因该结果修改。应用接入必须先复核少量身份 Gallery 和摄像头域偏移。

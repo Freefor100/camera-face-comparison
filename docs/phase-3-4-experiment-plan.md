@@ -130,8 +130,8 @@ Phase 3 证明现有质量门严重过严后新增此依赖，不能继续让 Ph
 - [x] 新增只按数据集、提取版本、图片路径和 SHA-256 建键的 `RawEmbeddingCache`；保存 embedding、原始测量或 FTE，不保存质量判定。
 - [x] 有身份标签的数据集按面积选择主体脸，不沿用桌面应用的多人脸拒绝。
 - [x] cache-only 分数导出删除 `probe_quality_tier` 和 `probe_quality_score`，只保留原始质量指标。
-- [ ] 在 CUDA 上完成 13,233 张自然 LFW 原始提取，生成 Phase 4 六种无阈值分数并复跑精确扫描。
-- [ ] 核对改变质量规则或判定参数不会触发模型推理，关闭 `EVAL-002`。
+- [x] 在 CUDA 上完成 13,233 张自然 LFW 原始提取，得到 13,185 张 embedding、48 张 FTE；生成 34,320 条六方法分数并复跑精确扫描。
+- [x] 缓存复读命中 13,233 张、模型推理 0 次；改变质量规则或判定参数只重算分数/判定，已关闭 `EVAL-002`。
 
 ### Task 6：质量冻结后的联合标定与应用接入
 
@@ -152,10 +152,10 @@ Phase 3 证明现有质量门严重过严后新增此依赖，不能继续让 Ph
 - Consumes: Phase 4 选出的 `aggregation_method/top_k/match_threshold/use_score_gap/min_score_gap`。
 - Produces: 应用配置和运行识别服务使用同一套冻结规则。
 
-- [ ] 若质量规则改变，重新生成 LFW embedding/无阈值分数；未改变则复用 Phase 2 分数库。
-- [ ] 在 Calibration 选择主工作点，在 Evaluation 只执行一次最终统计。
+- [x] 已按 Phase 3 结论清除质量预筛并重建自然 LFW 原始 embedding/无阈值分数，不再复用被质量门污染的 Phase 2 分数库。
+- [x] 在 Calibration 选择主工作点，在 Evaluation 只执行一次最终统计。
 - [ ] 先写失败测试，再把选定聚合与规则接入应用；删除未被选择的部署旧逻辑和质量分层阈值。
-- [ ] 记录 Phase 4 实际 FPIR、FNIR、TPIR、Rank-1、FTE、FTA 和有效分母。
+- [x] 在 `docs/phase-4-results.md` 记录 Phase 4 实际 FPIR、FNIR、TPIR、Rank-1、模型失败和有效分母。
 - [ ] 全量运行 pytest、Ruff、compileall、`git diff --check`，提交：`feat: apply calibrated open-set recognition policy`。
 
 ## 完成判定

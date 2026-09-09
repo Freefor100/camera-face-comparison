@@ -32,11 +32,12 @@
 | LFW pilot | 7 张有效 Probe | 已完成；仅作真实模型链路烟雾测试 | `data/logs/phase2_algorithm_baseline.json` |
 | LFW 固定阈值历史诊断 | Gallery 7,490、Probe 5,743 | 已完成；结果依赖初始阈值，不作最终方法结论 | `data/logs/lfw_full_algorithm_baseline.json` |
 | LFW Phase 2 无阈值结果 | 有效 Gallery 4,735；有效 Probe 3,842；六方法 23,052 条 | 已完成；身份互斥分区和拒绝项已保存 | `data/experiments/phase2/` |
+| LFW Phase 4 自然原始结果 | 有效 Gallery 7,465；有效 Probe 5,720；六方法 34,320 条 | 已完成；无质量预筛，已完成联合标定和一次独立 Evaluation | `data/experiments/phase4/` |
 | XQLFW 全量预检 | 7,263 张、6,000 对 | 已完成 CUDA 链路预检；仅 2,296 张图片、4 对通过现有质量门，正式分析在 Phase 5 | `data/logs/xqlfw_full_evaluation_report.json` |
 | QMUL 官方协议 | 全部官方 MAT 标签和目录 | 已核验 | `data/logs/qmul_survface_protocol.json` |
 | QMUL 默认门压力预检 | 60,294 张 Gallery | `min_face_size=112` 下无有效 Gallery；作为域限制证据，正式分析在 Phase 5 | 缓存位于 `data/logs/cache/qmul_survface.sqlite`，没有有效识别报告 |
 
-LFW 全量 embedding 原运行使用实际 `CUDAExecutionProvider`。Phase 2 无阈值导出只读取 8,577 条有效和 4,656 条拒绝缓存记录，没有重新运行 InsightFace。
+LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,185 张获得 embedding、48 张 FTE。再次读取同一缓存时 13,233 张全部命中且模型推理为 0；聚合或判定参数变化不再触发 InsightFace。
 
 ## 3. Phase 2 可复现命令
 
@@ -74,6 +75,23 @@ LFW 全量 embedding 原运行使用实际 `CUDAExecutionProvider`。Phase 2 无
 ```
 
 缓存只有一个批次时脚本自动选择；有多个批次时必须用 `--cache-extraction-id` 明确指定。脚本不会导入 `FaceEngine`，缓存缺失或图片 SHA-256 改变时直接失败，不会悄悄重新推理。
+
+### 3.4 Phase 4 自然 LFW 与联合标定
+
+```bash
+.venv/bin/python scripts/extract_lfw_raw_embeddings.py --data-dir ./data
+.venv/bin/python scripts/export_lfw_decision_scores.py \
+  --data-dir ./data \
+  --cache-path ./data/logs/cache/lfw_raw.sqlite \
+  --output-dir ./data/experiments/phase4
+.venv/bin/python scripts/calibrate_thresholds.py \
+  --scores ./data/experiments/phase4/decision_scores.sqlite
+.venv/bin/python scripts/evaluate_selected_operating_point.py \
+  --scores ./data/experiments/phase4/decision_scores.sqlite \
+  --target-fpir 0.003
+```
+
+前两个 Phase 2 入口保留为历史链路；正式聚合结论以 [Phase 4 结果](phase-4-results.md) 为准。
 
 ## 4. Phase 5 预留入口
 
