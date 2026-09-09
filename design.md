@@ -237,3 +237,19 @@ Phase 4 新增 `scripts/extract_lfw_raw_embeddings.py` 和 `RawEmbeddingCache`�
 同一批 XQLFW 图片在只执行检测和识别模块后，有效 embedding 平均提取耗时从
 32.293 ms 降至 23.896 ms；两份缓存的检测状态、人脸数量、质量指标和 embedding
 逐条一致，官方验证准确率不变。该测量仅覆盖模型推理子阶段，不代表应用 E2E 耗时。
+
+## 13. 当前 QMUL-SurvFace 监控域压力评测
+
+`scripts/extract_qmul_raw_embeddings.py` 使用 QMUL 官方 MAT 标签和三个图片目录，
+把 Gallery、Mated Probe 与 Unmated Probe 共 242,453 张图片写入独立
+`RawEmbeddingCache`。它不应用桌面数值质量门；每 100 张提交一次，支持中断恢复。
+
+`scripts/evaluate_qmul.py` 是 cache-only 入口。它为每个至少有一张有效参考图的身份建立
+归一化 Mean Prototype，保存有效 Probe 的第一、第二候选和候选分差，并分别统计模型
+FTE、Mated 身份无有效 Gallery、Rank-1 和 Unmated 分数分布。Phase 4 的 LFW 工作点
+只被机械应用为跨域迁移诊断，不使用 QMUL 标签重新搜索参数。
+
+当前全量结果为 436/242,453 张产生 embedding；Gallery 74/60,294 张、70/3,000
+个身份可用，Mated 只有 4/60,423 张可评分且 Rank-1 为 0，Unmated 有
+264/121,736 张可评分。LFW 候选分差门使 268 张可评分 Probe 全部被拒。该结果描述
+监控小脸域不受当前模型覆盖的系统边界，不修改桌面应用阈值。

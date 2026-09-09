@@ -37,6 +37,7 @@
 | XQLFW 推理子阶段优化 | 同一 7,263 张图片、独立空缓存 | 只执行检测与识别后，有效 embedding 平均耗时下降 26.0%；embedding 与验证结果不变 | `data/experiments/phase5/xqlfw_optimized_*` |
 | QMUL 官方协议 | 全部官方 MAT 标签和目录 | 已核验 | `data/logs/qmul_survface_protocol.json` |
 | QMUL 默认门压力预检 | 60,294 张 Gallery | `min_face_size=112` 下无有效 Gallery；作为域限制证据，正式分析在 Phase 5 | 缓存位于 `data/logs/cache/qmul_survface.sqlite`，没有有效识别报告 |
+| QMUL 全量原始压力实验 | 242,453 张；436 张有效 embedding | 已完成无质量门原始提取；70/3,000 个 Gallery 身份可用，Mated 仅 4 张可评分且 Rank-1 为 0 | `data/experiments/phase5/qmul_*` |
 
 LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,185 张获得 embedding、48 张 FTE。再次读取同一缓存时 13,233 张全部命中且模型推理为 0；聚合或判定参数变化不再触发 InsightFace。
 
@@ -94,7 +95,7 @@ LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,
 
 前两个 Phase 2 入口保留为历史链路；正式聚合结论以 [Phase 4 结果](phase-4-results.md) 为准。
 
-## 4. Phase 5 预留入口
+## 4. Phase 5 评测入口
 
 XQLFW：
 
@@ -111,14 +112,20 @@ QMUL-SurvFace：
   --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace \
   --output ./data/logs/qmul_survface_protocol.json
 
+.venv/bin/python scripts/extract_qmul_raw_embeddings.py \
+  --data-dir ./data \
+  --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
+
 .venv/bin/python scripts/evaluate_qmul.py \
   --data-dir ./data \
   --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace \
-  --cache-path ./data/logs/cache/qmul_survface.sqlite \
-  --report-output ./data/logs/qmul_survface_evaluation_report.json
+  --cache-path ./data/logs/cache/qmul_survface_raw.sqlite \
+  --transfer-policy ./data/experiments/phase4/final_evaluation.json
 ```
 
-XQLFW 正式结果见 [Phase 5 XQLFW 结果](phase-5-xqlfw-results.md)。QMUL 正式分析仍必须先根据数据域定义可解释的模型覆盖，不能把“几乎全部拒绝”后的极小有效分母当成鲁棒性准确率。
+正式结果见 [Phase 5 XQLFW 结果](phase-5-xqlfw-results.md)和
+[Phase 5 QMUL 结果](phase-5-qmul-results.md)。QMUL 的有效分母极小，因此不能把
+LFW 工作点产生的“FPIR=0”解释成鲁棒性准确率；它同时发生 TPIR=0 的全拒绝。
 
 ## 5. 结果解释规则
 

@@ -2,7 +2,7 @@
 
 离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序从外置摄像头或本地图片读取人脸，在本地标准库中检索已录入人员；证据不足时输出“未知人员”，不会强行给出姓名。
 
-当前版本先保证主链路可运行，再按依赖顺序完成质量验证、联合标定、鲁棒性扩展和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，阶段实验见 [Phase 2 结果](docs/phase-2-results.md)、[Phase 3 结果](docs/phase-3-results.md)、[Phase 4 结果](docs/phase-4-results.md)与 [Phase 5 XQLFW 结果](docs/phase-5-xqlfw-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
+当前版本先保证主链路可运行，再按依赖顺序完成质量验证、联合标定、鲁棒性扩展和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，阶段实验见 [Phase 2 结果](docs/phase-2-results.md)、[Phase 3 结果](docs/phase-3-results.md)、[Phase 4 结果](docs/phase-4-results.md)、[Phase 5 XQLFW 结果](docs/phase-5-xqlfw-results.md)与 [Phase 5 QMUL 结果](docs/phase-5-qmul-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
 
 ## 项目目标
 
@@ -22,8 +22,8 @@
 | 姓名/未知人员判别 | 已实现单脸检查、1:N 打分、阈值和候选分差拒识 | **LFW 联合标定已完成；桌面域参数待复核** |
 | 系统 UI | 已实现识别页、标准库页、状态和异常反馈 | **Phase 1 功能链路已通过；视觉收尾在 Phase 5** |
 | 标准库动态扩容 | 已实现本地图片和当前画面新增、追加及重启恢复 | **Phase 1 完整链路已通过** |
-| 扩展优化功能 | 计划实现“短时间窗口多帧采集 + 质量择优”和端到端时间优化，并分别保留基线对比 | **尚未完成扩展** |
-| 优化前后对比证据 | 已完成质量实验、34,320 条自然 LFW 六方法分数和一次独立 Evaluation；鲁棒性扩展尚未复测 | **Phase 2～4 已形成证据；Phase 5 待做** |
+| 扩展优化功能 | 已完成未使用模型裁剪及全量同条件性能复测；多帧择优和完整 E2E 优化仍待实现 | **时间优化已部分完成；鲁棒性扩展待做** |
+| 优化前后对比证据 | 已完成质量实验、六方法联合标定、XQLFW/QMUL 压力实验和推理耗时 A/B；桌面多帧尚未复测 | **Phase 2～5 已形成阶段证据** |
 
 “代码已实现”只说明相应路径存在且自动化测试通过，不等于已经完成真实摄像头、正式数据集或现场条件验收。
 
@@ -43,6 +43,7 @@
 - Phase 4 在 Calibration 上选出 LFW 大 Gallery 条件下的 `Mean Prototype + score_gap` 候选，并在独立 Evaluation 达到 `FPIR=0.252%`、`TPIR=48.45%`。Gallery 规模和摄像头域不同，因此尚未写入应用配置。
 - Phase 5 的 XQLFW 全量实验已完成：共同有效 5,871 对上，原始 LFW 到跨质量变体的 10 折验证准确率由 98.48% 降至 94.14%，同人相似度均值下降 0.2594。
 - 人脸引擎已停止执行未使用的性别年龄和额外关键点模型；同一批 7,263 张 XQLFW 图片上，有效 embedding 平均耗时由 32.293 ms 降至 23.896 ms，结果逐字节不变。该结果是推理子阶段优化，不等同于 E2E 优化。
+- Phase 5 的 QMUL-SurvFace 全量压力实验已完成：242,453 张监控图片中仅 436 张产生 embedding，3,000 个 Gallery 身份仅 70 个可用；这被记录为监控小脸域限制，不用于修改桌面阈值。
 
 ## 阶段 TODO
 
@@ -102,7 +103,7 @@
 
 - [x] 使用 XQLFW 官方 6,000 对完成真实跨质量分析，并与原始 LFW 的同协议、共同有效 Pair 比较。
 - [x] 删除逐图执行的未使用模型，并用独立空缓存全量复测：有效 embedding 平均耗时下降 26.0%，7,263 条结果零差异。
-- [ ] 使用 QMUL-SurvFace 记录监控小脸域的模型覆盖和系统限制。
+- [x] 完整处理 QMUL-SurvFace 242,453 张官方图片，记录原始模型覆盖、FTE、可评分分母和 LFW 工作点全拒绝现象，并将监控小脸域列为系统限制。
 - [ ] 使用非最终演示人员建立临时摄像头开发集，检查 LFW 候选规则在小 Gallery 和桌面域是否偏移。
 - [ ] 实现“短时间多帧采集 + 质量择优”，以单帧为基线做相同人员、场景、方法和阈值的复测。
 - [ ] 记录输入、检测、特征、检索、判定、日志和 UI 的分阶段及 E2E 耗时，只优化实测瓶颈。
@@ -239,7 +240,7 @@ SHA-256 检查针对已入库参考图片和 SQLite 中的 embedding BLOB，不�
 
 ## 当前数据集评测入口
 
-现有脚本保留小型 LFW pilot、固定阈值报告和 Phase 2 质量预筛结果作为历史诊断。Phase 4 的正式算法比较使用自然 LFW 原始缓存和无阈值 SQLite；XQLFW 和 QMUL-SurvFace 入口留给 Phase 5。所有产物均在被 Git 忽略的 `data/` 下。
+现有脚本保留小型 LFW pilot、固定阈值报告和 Phase 2 质量预筛结果作为历史诊断。Phase 4 的正式算法比较使用自然 LFW 原始缓存和无阈值 SQLite；Phase 5 的 XQLFW 与 QMUL-SurvFace 均使用无质量门原始缓存。所有产物均在被 Git 忽略的 `data/` 下。
 
 ```bash
 python scripts/prepare_lfw.py --data-dir ./data --download \
@@ -281,8 +282,12 @@ python scripts/extract_xqlfw_raw_embeddings.py --data-dir ./data
 python scripts/evaluate_xqlfw.py --data-dir ./data
 python scripts/compare_xqlfw_domains.py
 python scripts/prepare_qmul.py --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
+python scripts/extract_qmul_raw_embeddings.py --data-dir ./data \
+  --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
 python scripts/evaluate_qmul.py --data-dir ./data \
-  --cache-path ./data/logs/cache/qmul_survface.sqlite
+  --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace \
+  --cache-path ./data/logs/cache/qmul_survface_raw.sqlite \
+  --transfer-policy ./data/experiments/phase4/final_evaluation.json
 ```
 
 这些结果必须分别记录图片覆盖数、模型失败数、有效分母、协议和耗时。LFW 算法候选已经完成独立评估，但桌面摄像头参数和鲁棒性扩展仍要等 Phase 5 实验后冻结。
