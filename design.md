@@ -207,15 +207,15 @@ SQLite 开启外键、WAL、5 秒 busy timeout 和 `BEGIN IMMEDIATE` 写事务�
 
 历史流式报告仍会在给定固定阈值下输出 FPIR/FNIR，但这类结果被标记为历史诊断。项目还已有 XQLFW 官方 pairs 解析、QMUL-SurvFace 官方 MAT 协议解析和相应评测入口；它们不会被 Phase 2 cache-only 导出调用。
 
-## 11. 当前阈值校准器
+## 11. 当前开放集工作点扫描器
 
-`scripts/calibrate_thresholds.py` 读取已预先生成的人员分数 JSONL，在 `0.30–0.80` 的匹配阈值和 `0.00–0.20` 的候选分差之间按 0.01 枚举。
+`scripts/calibrate_thresholds.py` 直接读取 `decision_scores.sqlite`，只查询 `split='calibration'`，不在参数选择期间读取 Evaluation。它对每种人员聚合分别比较：
 
-当前选择顺序是：
+- 只使用 `match_threshold`；
+- 同时使用 `match_threshold` 和 `min_score_gap`。
 
-1. 未知人员误接收数量最少；
-2. 已知人员正确识别数量最多；
-3. 若仍相同，选择更高的匹配阈值；
-4. 若仍相同，选择更大的候选分差。
+候选值来自 Calibration 中实际出现的 `top_score` 和 `score_gap` 断点，并补充合法边界 0 和 1。二维规则先建立“最高分断点 × 候选分差断点”的离散计数，再用后缀累计一次得到所有组合的接收数量，不按 0.01 网格近似，也不需要反向传播。
 
-脚本可以分别把结果写入 high 或 medium 配置，但当前仓库没有一份独立 Calibration 数据集产生的正式校准结果。
+扫描器分别输出 FPIR 不超过 1%、0.3% 和观测 0% 的工作点。每个工作点记录匹配阈值、是否启用候选分差、Known Rank-1、TPIR、FNIR、Unknown 误接收数和 FPIR；若闭区间内没有组合达到目标，会明确标记 `meets_target=false`。`evaluate_operating_point()` 只有被显式调用时才会把已经选定的参数应用到 Evaluation。
+
+当前扫描器已经对 Phase 2 历史质量策略下的分数做过预演，但该分数库被启发式质量门提前筛选，不能作为最终参数。应用配置尚未被扫描结果修改。

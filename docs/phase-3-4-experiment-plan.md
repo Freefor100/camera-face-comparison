@@ -117,11 +117,11 @@
 - Produces: `compare_methods(decision_scores_path, split='calibration') -> CalibrationReport`。
 - Produces: `evaluate_operating_point(decision_scores_path, selected, split='evaluation') -> EvaluationReport`。
 
-- [ ] 写失败测试，验证仅阈值扫描、阈值加候选分差扫描、无方案达到目标 FPIR 以及同效时优先简单规则。
-- [ ] 使用实际 `top_score` 和 `score_gap` 离散断点；二维规则通过反向累计计数扫描，不构造“候选组合 × Probe”的三维数组。
-- [ ] 对六种聚合分别报告 `FPIR≤1%`、`FPIR≤0.3%`、Calibration 观测 `FPIR=0%`，同时保留仅阈值和阈值+候选分差两组。
-- [ ] 禁止脚本在选择阶段查询 `split='evaluation'`；只有显式评估命令可以读取 Evaluation。
-- [ ] 运行针对性测试并提交：`feat: add exact open-set operating-point calibration`。
+- [x] 写失败测试，验证仅阈值扫描、阈值加候选分差扫描和无方案达到目标 FPIR。
+- [x] 使用实际 `top_score` 和 `score_gap` 离散断点；二维规则通过反向累计计数扫描，不构造“候选组合 × Probe”的三维数组。
+- [x] 对六种聚合分别报告 `FPIR≤1%`、`FPIR≤0.3%`、Calibration 观测 `FPIR=0%`，同时保留仅阈值和阈值+候选分差两组。
+- [x] 禁止脚本在选择阶段查询 `split='evaluation'`；只有显式 `evaluate_operating_point()` 可以读取 Evaluation。
+- [x] 运行针对性测试并提交：`feat: add exact open-set operating-point calibration`。
 
 ### Task 6：质量冻结后的联合标定与应用接入
 
