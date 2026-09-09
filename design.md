@@ -201,9 +201,11 @@ SQLite 开启外键、WAL、5 秒 busy timeout 和 `BEGIN IMMEDIATE` 写事务�
 
 `split_lfw_protocol()` 在质量过滤前按来源身份把 Probe 固定为 `calibration` 和 `evaluation`。Gallery 保持相同；Known 使用真实 Gallery 身份分组，Unknown 从图片首级目录恢复来源身份，同一来源身份不会跨分区。分区协议保存源协议哈希、种子、分区比例和全部路径。
 
-`scripts/export_lfw_decision_scores.py` 是 cache-only 导出入口，不导入或初始化 `FaceEngine`。它从已有缓存生成六种人员聚合：Single、Max、Mean Prototype、Top-K Mean K=2/3/5。Top-K Mean 是普通平均，不读取质量权重。每张有效 Probe 保存第一候选、`top_score`、第二候选、`second_score`、`score_gap`、真实标签、质量指标和评分耗时；拒绝图片另表保存原因。分数表不保存匹配阈值或最小候选分差。
+Phase 4 新增 `scripts/extract_lfw_raw_embeddings.py` 和 `RawEmbeddingCache`。原始缓存主键只包含数据集、模型提取版本、相对路径和图片 SHA-256；记录主体脸 embedding、五项原始测量、检测数量、耗时或 FTE，不包含质量策略。LFW 有身份标签且主体明确，因此检测到多张脸时选择面积最大的主体脸；这个规则只用于数据集，不改变桌面应用的多人脸拒绝。
 
-本机当前 `decision_scores.sqlite` 由 LFW 全量缓存生成：4,735 张有效 Gallery、3,842 张有效 Probe、1,901 张 Probe 拒绝，六种方法共 23,052 条分数记录。两个 JSON 摘要只计算无阈值 Rank-1 和分数分布，不执行 Known/Unknown 接收判定。
+`scripts/export_lfw_decision_scores.py` 是原始缓存的 cache-only 导出入口，不导入或初始化 `FaceEngine`。它从已有缓存生成六种人员聚合：Single、Max、Mean Prototype、Top-K Mean K=2/3/5。Top-K Mean 是普通平均，不读取质量权重。每张有效 Probe 保存第一候选、`top_score`、第二候选、`second_score`、`score_gap`、真实标签、原始质量指标和评分耗时；模型 FTE 另表保存原因。分数表不保存质量等级、匹配阈值或最小候选分差。
+
+本机 Phase 2 历史 `decision_scores.sqlite` 由质量筛选缓存生成：4,735 张有效 Gallery、3,842 张有效 Probe、1,901 张 Probe 拒绝，六种方法共 23,052 条分数记录。Phase 4 原始缓存及新分数库使用独立目录，防止历史诊断覆盖最终实验输入。
 
 历史流式报告仍会在给定固定阈值下输出 FPIR/FNIR，但这类结果被标记为历史诊断。项目还已有 XQLFW 官方 pairs 解析、QMUL-SurvFace 官方 MAT 协议解析和相应评测入口；它们不会被 Phase 2 cache-only 导出调用。
 

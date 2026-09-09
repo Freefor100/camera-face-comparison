@@ -123,6 +123,16 @@
 - [x] 禁止脚本在选择阶段查询 `split='evaluation'`；只有显式 `evaluate_operating_point()` 可以读取 Evaluation。
 - [x] 运行针对性测试并提交：`feat: add exact open-set operating-point calibration`。
 
+### Task 5.5：清除质量预筛并重建自然 LFW 原始分数
+
+Phase 3 证明现有质量门严重过严后新增此依赖，不能继续让 Phase 2 的 1,901 个 Probe 拒绝污染最终标定。
+
+- [x] 新增只按数据集、提取版本、图片路径和 SHA-256 建键的 `RawEmbeddingCache`；保存 embedding、原始测量或 FTE，不保存质量判定。
+- [x] 有身份标签的数据集按面积选择主体脸，不沿用桌面应用的多人脸拒绝。
+- [x] cache-only 分数导出删除 `probe_quality_tier` 和 `probe_quality_score`，只保留原始质量指标。
+- [ ] 在 CUDA 上完成 13,233 张自然 LFW 原始提取，生成 Phase 4 六种无阈值分数并复跑精确扫描。
+- [ ] 核对改变质量规则或判定参数不会触发模型推理，关闭 `EVAL-002`。
+
 ### Task 6：质量冻结后的联合标定与应用接入
 
 **Files:**

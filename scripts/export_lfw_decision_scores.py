@@ -5,7 +5,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,17 +18,18 @@ from camera_face_comparison.decision_scores import (
     summarize_decision_scores,
 )
 from camera_face_comparison.evaluation_cache import (
-    EvaluationEmbeddingCache,
-    available_cache_extraction_ids,
     embedding_extraction_id,
     file_sha256,
-    quality_policy_id,
     write_json_atomic,
 )
 from camera_face_comparison.lfw_dataset import (
     read_lfw_protocol,
     split_lfw_protocol,
     write_lfw_split_protocol,
+)
+from camera_face_comparison.raw_embedding_cache import (
+    RawEmbeddingCache,
+    available_raw_extraction_ids,
 )
 
 
@@ -45,7 +46,6 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--calibration-fraction", type=float, default=0.5)
-    parser.add_argument("--min-face-size", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()
 
@@ -54,11 +54,9 @@ def main() -> int:
         args.source_protocol
         or settings.data_dir / "datasets" / "lfw_full_open_set_protocol.json"
     )
-    cache_path = args.cache_path or settings.logs_dir / "cache" / "lfw.sqlite"
-    output_dir = args.output_dir or settings.data_dir / "experiments" / "phase2"
+    cache_path = args.cache_path or settings.logs_dir / "cache" / "lfw_raw.sqlite"
+    output_dir = args.output_dir or settings.data_dir / "experiments" / "phase4"
     dataset_dir = settings.data_dir / "datasets" / "lfw_funneled"
-    extraction_settings = replace(settings, min_face_size_px=args.min_face_size)
-    cache_quality_policy_id = quality_policy_id(extraction_settings)
     try:
         source_protocol = read_lfw_protocol(source_protocol_path)
         split_protocol = split_lfw_protocol(
@@ -72,16 +70,14 @@ def main() -> int:
         split_protocol_sha256 = file_sha256(split_protocol_path)
         cache_extraction_id = _select_cache_extraction_id(
             cache_path,
-            dataset_id="lfw-full-open-set-v1",
-            quality_policy_id=cache_quality_policy_id,
+            dataset_id="lfw-natural-v1",
             requested=args.cache_extraction_id,
         )
-        run_id = f"lfw-phase2-{split_protocol_sha256[:12]}-{_safe_id(cache_extraction_id)}"
-        with EvaluationEmbeddingCache(
+        run_id = f"lfw-phase4-{split_protocol_sha256[:12]}-{_safe_id(cache_extraction_id)}"
+        with RawEmbeddingCache(
             cache_path,
-            "lfw-full-open-set-v1",
+            "lfw-natural-v1",
             cache_extraction_id,
-            cache_quality_policy_id,
         ) as cache:
             summary = export_lfw_decision_scores(
                 dataset_dir=dataset_dir,
@@ -99,7 +95,7 @@ def main() -> int:
         return 1
 
     manifest = {
-        "artifact": "lfw-threshold-free-decision-scores-v1",
+        "artifact": "lfw-natural-threshold-free-decision-scores-v1",
         "generated_at": datetime.now(UTC).isoformat(),
         "run_id": run_id,
         "source_protocol": str(source_protocol_path),
@@ -109,20 +105,11 @@ def main() -> int:
         "random_seed": args.seed,
         "calibration_fraction": args.calibration_fraction,
         "cache_path": str(cache_path),
-        "cache_dataset_id": "lfw-full-open-set-v1",
+        "cache_dataset_id": "lfw-natural-v1",
         "selected_cache_extraction_id": cache_extraction_id,
-        "current_embedding_extraction_id": embedding_extraction_id(extraction_settings),
-        "quality_policy_id": cache_quality_policy_id,
-        "quality_configuration": {
-            "min_detection_score": extraction_settings.min_detection_score,
-            "min_face_size_px": extraction_settings.min_face_size_px,
-            "min_blur_variance": extraction_settings.min_blur_variance,
-            "min_brightness": extraction_settings.min_brightness,
-            "max_brightness": extraction_settings.max_brightness,
-            "min_contrast": extraction_settings.min_contrast,
-            "high_quality_score": extraction_settings.high_quality_score,
-            "medium_quality_score": extraction_settings.medium_quality_score,
-        },
+        "current_embedding_extraction_id": embedding_extraction_id(settings),
+        "quality_policy": None,
+        "primary_face_rule": "largest-detected-face",
         "aggregation_variants": [
             {"method": method, "top_k": top_k}
             for method, top_k in (
@@ -138,8 +125,8 @@ def main() -> int:
         "code": _code_version(),
         "notes": [
             "decision_scores.sqlite 不保存 match_threshold 或 min_score_gap。",
-            "selected_cache_extraction_id 是本次实际读取的既有缓存批次标识。",
-            "current_embedding_extraction_id 用于采用拆分标识后的后续特征提取。",
+            "原始缓存不应用数值质量门，rejections 只表示模型 FTE。",
+            "有身份标签的数据集选择面积最大的主体脸，不沿用桌面多人脸拒绝规则。",
         ],
     }
     write_json_atomic(
@@ -167,12 +154,11 @@ def _select_cache_extraction_id(
     path: Path,
     *,
     dataset_id: str,
-    quality_policy_id: str,
     requested: str | None,
 ) -> str:
-    """选择明确的缓存批次；多批次并存时要求调用者指定。"""
+    """选择明确的原始提取批次；多批次并存时要求调用者指定。"""
 
-    available = available_cache_extraction_ids(path, dataset_id, quality_policy_id)
+    available = available_raw_extraction_ids(path, dataset_id)
     if requested is not None:
         if requested not in available:
             raise ValueError(

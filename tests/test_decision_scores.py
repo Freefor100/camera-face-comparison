@@ -12,14 +12,13 @@ from camera_face_comparison.decision_scores import (
     summarize_decision_scores,
 )
 from camera_face_comparison.evaluation_cache import (
-    EvaluationEmbeddingCache,
     decision_policy_id,
     embedding_extraction_id,
     file_sha256,
     quality_policy_id,
 )
-from camera_face_comparison.image_input import QualityProfile
 from camera_face_comparison.lfw_dataset import LfwSplitProbe, LfwSplitProtocol
+from camera_face_comparison.raw_embedding_cache import RawEmbeddingCache
 
 
 def test_embedding_id_ignores_quality_and_decision_parameters(tmp_path) -> None:
@@ -75,18 +74,13 @@ def test_cache_only_export_saves_six_threshold_free_scores_and_rejections(tmp_pa
         calibration_fraction=0.5,
         source_protocol_sha256="source-hash",
     )
-    profile = QualityProfile(
-        "high",
-        0.8,
-        {
-            "detection_score": 0.95,
-            "face_size_px": 160.0,
-            "blur_variance": 140.0,
-            "brightness": 120.0,
-            "contrast": 30.0,
-        },
-        (),
-    )
+    metrics = {
+        "detection_score": 0.95,
+        "face_size_px": 160.0,
+        "blur_variance": 140.0,
+        "brightness": 120.0,
+        "contrast": 30.0,
+    }
     embeddings = {
         paths["a1"]: np.array([1.0, 0.0], dtype=np.float32),
         paths["a2"]: np.array([0.8, 0.6], dtype=np.float32),
@@ -96,18 +90,22 @@ def test_cache_only_export_saves_six_threshold_free_scores_and_rejections(tmp_pa
         paths["unknown"]: np.array([0.70710677, 0.70710677], dtype=np.float32),
     }
     cache_path = tmp_path / "embeddings.sqlite"
-    with EvaluationEmbeddingCache(cache_path, "lfw", "model-a", "quality-a") as cache:
+    with RawEmbeddingCache(cache_path, "lfw", "model-a") as cache:
         for relative_path, embedding in embeddings.items():
-            cache.put_valid(
-                relative_path,
-                file_sha256(dataset_dir / relative_path),
-                embedding,
-                profile,
+            cache.put_observed(
+                relative_path=relative_path,
+                file_sha256=file_sha256(dataset_dir / relative_path),
+                embedding=embedding,
+                metrics=metrics,
+                face_count=1,
+                latency_ms=10.0,
             )
-        cache.put_rejected(
-            paths["rejected"],
-            file_sha256(dataset_dir / paths["rejected"]),
-            "blur_below_minimum",
+        cache.put_failed(
+            relative_path=paths["rejected"],
+            file_sha256=file_sha256(dataset_dir / paths["rejected"]),
+            face_count=0,
+            latency_ms=10.0,
+            reason="no_face_detected",
         )
         cache.commit()
         summary = export_lfw_decision_scores(
@@ -142,6 +140,8 @@ def test_cache_only_export_saves_six_threshold_free_scores_and_rejections(tmp_pa
 
     assert "match_threshold" not in columns
     assert "min_score_gap" not in columns
+    assert "probe_quality_tier" not in columns
+    assert "probe_quality_score" not in columns
     assert "embedding_extraction_id" in run_columns
     assert methods == {
         ("single", 0),

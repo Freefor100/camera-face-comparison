@@ -10,9 +10,9 @@ from time import perf_counter
 
 import numpy as np
 
-from .evaluation_cache import EvaluationEmbeddingCache, file_sha256
-from .image_input import QualityProfile
+from .evaluation_cache import file_sha256
 from .lfw_dataset import LfwSplitProbe, LfwSplitProtocol
+from .raw_embedding_cache import RawEmbeddingCache
 
 METHOD_VARIANTS = (
     ("single", 0),
@@ -43,7 +43,7 @@ class _ValidProbe:
 
     protocol: LfwSplitProbe
     embedding: np.ndarray
-    quality: QualityProfile
+    quality_metrics: dict[str, float]
 
 
 @dataclass(frozen=True)
@@ -159,7 +159,7 @@ def export_lfw_decision_scores(
     *,
     dataset_dir: Path,
     protocol: LfwSplitProtocol,
-    cache: EvaluationEmbeddingCache,
+    cache: RawEmbeddingCache,
     output_path: Path,
     run_id: str,
     protocol_sha256: str,
@@ -172,7 +172,7 @@ def export_lfw_decision_scores(
     参数：
         dataset_dir：协议相对路径对应的 LFW 图片根目录。
         protocol：身份互斥的 Calibration/Evaluation 固定协议。
-        cache：已完成特征提取的只读来源缓存。
+        cache：已完成、与质量策略无关的原始特征缓存。
         output_path：实验分数 SQLite 输出路径。
         run_id：本次导出的稳定运行标识。
         protocol_sha256：当前分区协议文件的内容摘要。
@@ -267,7 +267,7 @@ def export_lfw_decision_scores(
 def _load_gallery(
     dataset_dir: Path,
     enrollment: Mapping[str, Sequence[str]],
-    cache: EvaluationEmbeddingCache,
+    cache: RawEmbeddingCache,
     on_progress: Callable[[str, int, int], None] | None,
 ) -> tuple[dict[str, list[np.ndarray]], list[tuple[str, str, str]], int]:
     """从缓存恢复全部 Gallery 向量，并保留每个拒绝原因。"""
@@ -279,8 +279,8 @@ def _load_gallery(
     for person_id, relative_paths in enrollment.items():
         for relative_path in relative_paths:
             entry = _required_cache_entry(dataset_dir, relative_path, cache)
-            if entry.status == "rejected":
-                rejections.append((person_id, relative_path, entry.reason or "cached_rejection"))
+            if entry.status == "failed":
+                rejections.append((person_id, relative_path, entry.reason or "cached_failure"))
             else:
                 if entry.embedding is None:
                     raise RuntimeError(f"cached embedding is missing: {relative_path}")
@@ -294,21 +294,21 @@ def _load_gallery(
 def _load_probes(
     dataset_dir: Path,
     probes: Sequence[LfwSplitProbe],
-    cache: EvaluationEmbeddingCache,
+    cache: RawEmbeddingCache,
     on_progress: Callable[[str, int, int], None] | None,
 ) -> tuple[list[_ValidProbe], list[tuple[LfwSplitProbe, str]]]:
-    """从缓存恢复探针向量，并把质量拒绝单独返回。"""
+    """从原始缓存恢复探针向量，并把模型 FTE 单独返回。"""
 
     valid: list[_ValidProbe] = []
     rejected: list[tuple[LfwSplitProbe, str]] = []
     for index, probe in enumerate(probes, start=1):
         entry = _required_cache_entry(dataset_dir, probe.relative_path, cache)
-        if entry.status == "rejected":
-            rejected.append((probe, entry.reason or "cached_rejection"))
+        if entry.status == "failed":
+            rejected.append((probe, entry.reason or "cached_failure"))
         else:
-            if entry.embedding is None or entry.quality is None:
+            if entry.embedding is None or entry.metrics is None:
                 raise RuntimeError(f"cached probe data is incomplete: {probe.relative_path}")
-            valid.append(_ValidProbe(probe, _normalize(entry.embedding), entry.quality))
+            valid.append(_ValidProbe(probe, _normalize(entry.embedding), entry.metrics))
         if on_progress is not None:
             on_progress("probe-cache", index, len(probes))
     return valid, rejected
@@ -317,7 +317,7 @@ def _load_probes(
 def _required_cache_entry(
     dataset_dir: Path,
     relative_path: str,
-    cache: EvaluationEmbeddingCache,
+    cache: RawEmbeddingCache,
 ):
     """校验图片内容后读取缓存；缺少记录时立即失败而不运行模型。"""
 
@@ -413,9 +413,7 @@ def _write_score_batches(
                             probe.protocol.expected_person_id is not None
                             and top_person_id == probe.protocol.expected_person_id
                         ),
-                        probe.quality.score,
-                        probe.quality.tier,
-                        json.dumps(probe.quality.metrics, ensure_ascii=False, sort_keys=True),
+                        json.dumps(probe.quality_metrics, ensure_ascii=False, sort_keys=True),
                         per_probe_scoring_ms,
                     )
                 )
@@ -424,9 +422,9 @@ def _write_score_batches(
             INSERT INTO decision_scores (
                 run_id, split, relative_path, source_identity, expected_person_id,
                 method, top_k, top_person_id, top_score, second_person_id,
-                second_score, score_gap, top_is_correct, probe_quality_score,
-                probe_quality_tier, probe_quality_json, scoring_latency_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                second_score, score_gap, top_is_correct, probe_quality_json,
+                scoring_latency_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -525,8 +523,6 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             second_score REAL NOT NULL,
             score_gap REAL NOT NULL,
             top_is_correct INTEGER NOT NULL CHECK(top_is_correct IN (0, 1)),
-            probe_quality_score REAL NOT NULL,
-            probe_quality_tier TEXT NOT NULL,
             probe_quality_json TEXT NOT NULL,
             scoring_latency_ms REAL NOT NULL,
             PRIMARY KEY (run_id, relative_path, method, top_k)
@@ -556,7 +552,7 @@ def _write_rejections(
     gallery_rejections: Sequence[tuple[str, str, str]],
     probe_rejections: Sequence[tuple[LfwSplitProbe, str]],
 ) -> None:
-    """保存质量门前后被排除的 Gallery 与 Probe 路径和原因。"""
+    """保存模型无法提取主体脸的 Gallery 与 Probe 路径和原因。"""
 
     rows = [
         (run_id, "gallery", None, relative_path, person_id, person_id, reason)
