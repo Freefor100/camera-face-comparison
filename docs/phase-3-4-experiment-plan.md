@@ -97,12 +97,12 @@
 - Produces: 每条件的 FTE、当前质量规则拒绝率、Known Rank-1、同人分数、Unknown top-score 分位点。
 - Produces: 每个原始指标和 `quality_score` 的 Error-versus-Reject 表，以及清洁输入保留率为 90%/95%/99% 的候选门。
 
-- [ ] 写失败测试，以手工分数验证 Rank-1、分位点和 Error-versus-Reject 计算。
-- [ ] 实现分析函数和原子 JSON 报告写入。
-- [ ] 在 CUDA 上运行真实实验；若中断，从 SQLite 缓存恢复。
-- [ ] 生成 `data/experiments/phase3/report.json` 和 `docs/phase-3-results.md`，文档只写实际数字。
-- [ ] 根据证据关闭或保留 `QUAL-001/QUAL-002`；不能稳定预测错误的数值指标不作为硬拒绝或加权依据。
-- [ ] 运行针对性测试、Ruff、compileall 和 diff 检查后提交：`docs: record phase 3 quality evidence`。
+- [x] 写失败测试，以手工分数验证 Rank-1、分位点和 Error-versus-Reject 计算。
+- [x] 实现分析函数和原子 JSON 报告写入。
+- [x] 在 CUDA 上运行真实实验；10,108 条正式测量全部完成，FTE=0。
+- [x] 生成 `data/experiments/phase3/report.json` 和 `docs/phase-3-results.md`，文档只写实际数字。
+- [x] 根据证据关闭 `QUAL-001`、保留并改写 `QUAL-002`；启发式质量分不进入最终硬拒绝、加权或分层识别阈值。
+- [x] 运行针对性测试、Ruff、compileall 和 diff 检查后提交：`docs: record phase 3 quality evidence`。
 
 ### Task 5：实现 Phase 4 精确断点扫描器
 

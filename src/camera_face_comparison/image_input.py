@@ -128,7 +128,7 @@ def apply_quality_policy(metrics: dict[str, float], settings: Settings) -> Quali
     if reasons:
         return QualityProfile("reject", 0.0, metrics, tuple(reasons))
 
-    score = _quality_score(metrics, settings)
+    score = calculate_quality_score(metrics, settings)
     if score >= settings.high_quality_score:
         tier: Literal["high", "medium", "reject"] = "high"
     elif score >= settings.medium_quality_score:
@@ -181,8 +181,17 @@ def _hard_failure_reasons(metrics: dict[str, float], settings: Settings) -> list
     return reasons
 
 
-def _quality_score(metrics: dict[str, float], settings: Settings) -> float:
-    """将清晰度、亮度和对比度指标合成为 0 到 1 的质量分数。"""
+def calculate_quality_score(metrics: dict[str, float], settings: Settings) -> float:
+    """将五项原始指标合成为独立于硬拒绝结果的启发式质量分。
+
+    参数：
+        metrics：`measure_quality()` 产生的五项原始指标。
+        settings：用于归一化各指标的当前质量配置。
+    返回：
+        位于闭区间 `[0, 1]` 的启发式质量分。
+
+    该函数不会应用硬质量门，因此实验仍能比较已经被拒绝的样本。
+    """
     detection = _clamp(
         (metrics["detection_score"] - settings.min_detection_score)
         / (1.0 - settings.min_detection_score)

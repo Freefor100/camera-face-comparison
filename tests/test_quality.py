@@ -18,6 +18,7 @@ from camera_face_comparison.face_engine import (
 from camera_face_comparison.image_input import (
     apply_quality_policy,
     assess_quality,
+    calculate_quality_score,
     measure_quality,
 )
 from camera_face_comparison.runtime import ExecutionBackend
@@ -192,3 +193,16 @@ def test_quality_measurement_is_independent_from_policy_thresholds(tmp_path) -> 
     assert accepted.tier != "reject"
     assert rejected.tier == "reject"
     assert rejected.reasons == ("underexposed",)
+
+
+def test_quality_score_remains_available_for_rejected_measurements(tmp_path) -> None:
+    """质量实验必须能分析硬门以下样本，不能把它们的启发式分数全部改成零。"""
+
+    settings = load_settings(tmp_path)
+    metrics = measure_quality(np.full((240, 320, 3), 20, dtype=np.uint8), _face())
+
+    profile = apply_quality_policy(metrics, settings)
+    score = calculate_quality_score(metrics, settings)
+
+    assert profile.tier == "reject"
+    assert score > 0.0
