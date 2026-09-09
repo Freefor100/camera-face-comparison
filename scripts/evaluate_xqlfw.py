@@ -32,6 +32,7 @@ def main() -> int:
     parser.add_argument("--pairs", type=Path)
     parser.add_argument("--quality-scores", type=Path)
     parser.add_argument("--cache-path", type=Path)
+    parser.add_argument("--cache-dataset-id", default="xqlfw-official-pairs-v1")
     parser.add_argument("--report-output", type=Path)
     args = parser.parse_args()
 
@@ -56,7 +57,7 @@ def main() -> int:
         extraction_id = embedding_extraction_id(settings)
         with RawEmbeddingCache(
             cache_path,
-            "xqlfw-official-pairs-v1",
+            args.cache_dataset_id,
             extraction_id,
         ) as cache:
             result = evaluate_xqlfw_protocol(
@@ -74,7 +75,7 @@ def main() -> int:
             "quality_scores_sha256": file_sha256(quality_scores_path),
             "dataset_dir": str(dataset_dir),
             "cache_path": str(cache_path),
-            "cache_dataset_id": "xqlfw-official-pairs-v1",
+            "cache_dataset_id": args.cache_dataset_id,
             "embedding_extraction_id": extraction_id,
             "quality_policy": None,
             "threshold_protocol": "nine-fold calibration, one-fold evaluation",
