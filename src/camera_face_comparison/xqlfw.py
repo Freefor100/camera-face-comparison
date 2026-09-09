@@ -79,6 +79,40 @@ def load_xqlfw_protocol(pairs_path: Path, dataset_dir: Path) -> XqlfwProtocol:
     )
 
 
+def load_xqlfw_quality_scores(path: Path) -> dict[str, float]:
+    """读取 XQLFW 随附的逐图片质量分。
+
+    参数：
+        path：`xqlfw_scores.txt` 文件路径。
+    返回：
+        图片相对路径到官方质量分的映射。
+    前置条件：
+        首行为 `ID Num Score`，其余行每行描述一个身份、图片序号和 `[0, 1]` 分数。
+    """
+
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    lines = [line for line in lines if line]
+    if not lines or lines[0].split() != ["ID", "Num", "Score"]:
+        raise ValueError("invalid XQLFW quality score header")
+    scores: dict[str, float] = {}
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) != 3:
+            raise ValueError(f"invalid XQLFW quality score row: {line}")
+        identity, index, raw_score = fields
+        try:
+            score = float(raw_score)
+        except ValueError as error:
+            raise ValueError(f"invalid XQLFW quality score: {raw_score}") from error
+        if not 0.0 <= score <= 1.0:
+            raise ValueError(f"XQLFW quality score must be between zero and one: {score}")
+        relative_path = _image_path(identity, index)
+        if relative_path in scores:
+            raise ValueError(f"duplicate XQLFW quality score: {relative_path}")
+        scores[relative_path] = score
+    return scores
+
+
 def _parse_pair(fields: list[str], same_identity: bool) -> tuple[str, str]:
     """把 LFW 格式的一行正样本或负样本转换为相对图片路径。"""
 

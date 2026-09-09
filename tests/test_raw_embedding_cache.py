@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 
 from camera_face_comparison.face_engine import FaceObservation
+from camera_face_comparison.raw_dataset_extraction import extract_or_load_raw_embedding
 from camera_face_comparison.raw_embedding_cache import RawEmbeddingCache
-from camera_face_comparison.raw_lfw_extraction import extract_or_load_raw_embedding
 
 
 class MultiFaceEngine:

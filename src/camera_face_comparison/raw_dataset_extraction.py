@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -85,27 +85,22 @@ def extract_or_load_raw_embedding(
     )
 
 
-def extract_lfw_protocol_raw_embeddings(
+def extract_dataset_raw_embeddings(
     *,
     dataset_dir: Path,
-    protocol: LfwProtocol,
+    relative_paths: Sequence[str],
     face_engine: RawDatasetFaceEngine,
     cache: RawEmbeddingCache,
     commit_every: int = 100,
     on_progress: Callable[[int, int, str, bool], None] | None = None,
 ) -> RawExtractionSummary:
-    """对 LFW 协议中的去重图片执行可恢复、无质量门的原始提取。"""
+    """对一组去重相对路径执行可恢复、无质量门的原始特征提取。"""
 
     if commit_every < 1:
         raise ValueError("commit_every must be at least one")
-    relative_paths = sorted(
-        {
-            *(path for paths in protocol.enrollment.values() for path in paths),
-            *(probe.relative_path for probe in protocol.probes),
-        }
-    )
+    paths = tuple(sorted(set(relative_paths)))
     observed = failed = cache_hits = inferences = pending = 0
-    for index, relative_path in enumerate(relative_paths, start=1):
+    for index, relative_path in enumerate(paths, start=1):
         image_path = dataset_dir / relative_path
         digest = file_sha256(image_path)
         was_cached = cache.get(relative_path, digest) is not None
@@ -124,12 +119,37 @@ def extract_lfw_protocol_raw_embeddings(
             cache.commit()
             pending = 0
         if on_progress is not None:
-            on_progress(index, len(relative_paths), relative_path, was_cached)
+            on_progress(index, len(paths), relative_path, was_cached)
     cache.commit()
     return RawExtractionSummary(
-        image_total=len(relative_paths),
+        image_total=len(paths),
         observed_total=observed,
         failed_total=failed,
         cache_hit_total=cache_hits,
         inference_total=inferences,
+    )
+
+
+def extract_lfw_protocol_raw_embeddings(
+    *,
+    dataset_dir: Path,
+    protocol: LfwProtocol,
+    face_engine: RawDatasetFaceEngine,
+    cache: RawEmbeddingCache,
+    commit_every: int = 100,
+    on_progress: Callable[[int, int, str, bool], None] | None = None,
+) -> RawExtractionSummary:
+    """提取 LFW Gallery 与 Probe 引用的全部去重图片。"""
+
+    relative_paths = (
+        *(path for paths in protocol.enrollment.values() for path in paths),
+        *(probe.relative_path for probe in protocol.probes),
+    )
+    return extract_dataset_raw_embeddings(
+        dataset_dir=dataset_dir,
+        relative_paths=relative_paths,
+        face_engine=face_engine,
+        cache=cache,
+        commit_every=commit_every,
+        on_progress=on_progress,
     )
