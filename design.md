@@ -253,3 +253,15 @@ FTE、Mated 身份无有效 Gallery、Rank-1 和 Unmated 分数分布。Phase 4 
 个身份可用，Mated 只有 4/60,423 张可评分且 Rank-1 为 0，Unmated 有
 264/121,736 张可评分。LFW 候选分差门使 268 张可评分 Probe 全部被拒。该结果描述
 监控小脸域不受当前模型覆盖的系统边界，不修改桌面应用阈值。
+
+## 14. 当前小 Gallery 规模评测
+
+`scripts/evaluate_gallery_scale.py` 只读取 Phase 4 自然 LFW 原始缓存。它从身份互斥的
+Calibration/Evaluation Known 池分别选择 3、5、10、25、50、100 个身份，每档使用
+10 个确定性重复；每次只在 Calibration 比较单阈值和阈值加候选分差，再把唯一工作点
+应用到 Evaluation。Phase 4 的完整 Gallery 工作点同时作为固定迁移对照。
+
+60 组迁移对照的 Evaluation Unknown FPIR 均为 0；完整 Gallery 工作点的平均 TPIR
+从 3 人的 98.63% 随规模增加下降到 100 人的 83.06%。独立小规模标定有 56/60 次
+选择单一匹配阈值，3 人档的阈值和 TPIR 方差明显较大。该结果只说明自然 LFW 域内的
+Gallery 规模效应，不替代真实摄像头域复核，也不修改当前应用配置。

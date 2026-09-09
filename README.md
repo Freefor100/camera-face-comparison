@@ -2,7 +2,7 @@
 
 离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序从外置摄像头或本地图片读取人脸，在本地标准库中检索已录入人员；证据不足时输出“未知人员”，不会强行给出姓名。
 
-当前版本先保证主链路可运行，再按依赖顺序完成质量验证、联合标定、鲁棒性扩展和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，阶段实验见 [Phase 2 结果](docs/phase-2-results.md)、[Phase 3 结果](docs/phase-3-results.md)、[Phase 4 结果](docs/phase-4-results.md)、[Phase 5 XQLFW 结果](docs/phase-5-xqlfw-results.md)与 [Phase 5 QMUL 结果](docs/phase-5-qmul-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
+当前版本先保证主链路可运行，再按依赖顺序完成质量验证、联合标定、鲁棒性扩展和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，阶段实验见 [Phase 2 结果](docs/phase-2-results.md)、[Phase 3 结果](docs/phase-3-results.md)、[Phase 4 结果](docs/phase-4-results.md)、[Phase 5 XQLFW 结果](docs/phase-5-xqlfw-results.md)、[Phase 5 QMUL 结果](docs/phase-5-qmul-results.md)与 [Phase 5 Gallery 规模结果](docs/phase-5-gallery-scale-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
 
 ## 项目目标
 
@@ -44,6 +44,7 @@
 - Phase 5 的 XQLFW 全量实验已完成：共同有效 5,871 对上，原始 LFW 到跨质量变体的 10 折验证准确率由 98.48% 降至 94.14%，同人相似度均值下降 0.2594。
 - 人脸引擎已停止执行未使用的性别年龄和额外关键点模型；同一批 7,263 张 XQLFW 图片上，有效 embedding 平均耗时由 32.293 ms 降至 23.896 ms，结果逐字节不变。该结果是推理子阶段优化，不等同于 E2E 优化。
 - Phase 5 的 QMUL-SurvFace 全量压力实验已完成：242,453 张监控图片中仅 436 张产生 embedding，3,000 个 Gallery 身份仅 70 个可用；这被记录为监控小脸域限制，不用于修改桌面阈值。
+- Phase 5 已完成 3～100 人小 Gallery 的 60 组 LFW 实验：完整 Gallery 工作点迁移后 Unknown FPIR 均为 0，风险已收窄到摄像头域；直接用 3 个 Known 身份重新标定的方差过大，不采用。
 
 ## 阶段 TODO
 
@@ -104,7 +105,8 @@
 - [x] 使用 XQLFW 官方 6,000 对完成真实跨质量分析，并与原始 LFW 的同协议、共同有效 Pair 比较。
 - [x] 删除逐图执行的未使用模型，并用独立空缓存全量复测：有效 embedding 平均耗时下降 26.0%，7,263 条结果零差异。
 - [x] 完整处理 QMUL-SurvFace 242,453 张官方图片，记录原始模型覆盖、FTE、可评分分母和 LFW 工作点全拒绝现象，并将监控小脸域列为系统限制。
-- [ ] 使用非最终演示人员建立临时摄像头开发集，检查 LFW 候选规则在小 Gallery 和桌面域是否偏移。
+- [x] 使用自然 LFW 做 3/5/10/25/50/100 人 Gallery、每档 10 次身份互斥复测，确认 LFW 域内缩小 Gallery 不会使完整 Gallery 工作点产生误接收。
+- [ ] 使用非最终演示人员建立临时摄像头开发集，检查剩余的桌面摄像头域偏移。
 - [ ] 实现“短时间多帧采集 + 质量择优”，以单帧为基线做相同人员、场景、方法和阈值的复测。
 - [ ] 记录输入、检测、特征、检索、判定、日志和 UI 的分阶段及 E2E 耗时，只优化实测瓶颈。
 - [ ] 根据 Phase 3 结论删除启发式软质量加权和质量分层识别阈值，只保留摄像头实验证明必要的输入硬门。
@@ -273,6 +275,8 @@ python scripts/calibrate_thresholds.py \
 python scripts/evaluate_selected_operating_point.py \
   --scores ./data/experiments/phase4/decision_scores.sqlite \
   --target-fpir 0.003
+python scripts/evaluate_gallery_scale.py --data-dir ./data \
+  --gallery-sizes 3 5 10 25 50 100 --repeats 10
 ```
 
 XQLFW 使用官方 6,000 对、原始无质量门缓存和 10 折阈值；QMUL 使用官方 Gallery、Mated Probe 和 Unmated Probe：
