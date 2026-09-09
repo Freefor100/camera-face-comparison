@@ -21,7 +21,8 @@
 - 阈值：每轮只用其余 9 折的实际相似度断点选择准确率最高的阈值，同效时优先更少异人误接收，再应用到当前 1 折；
 - 主体脸：数据集已有身份标签，检测到多个候选时选择面积最大的主体脸；
 - 缓存：`RawEmbeddingCache` 不包含质量门或验证阈值，评测阶段不初始化人脸模型；
-- 后端：首次 7,263 张提取由本机 `CUDAExecutionProvider` 完成，用时约 4 分钟。
+- 后端：ONNX Runtime session 优先选择 `CUDAExecutionProvider`，并保留
+  `CPUExecutionProvider` 作为不支持算子的回退；首次 7,263 张提取用时约 4 分钟。
 
 该 1:1 verification 实验回答“同一模型面对跨质量图片时验证性能如何变化”，不比较本项目 1:N 的人员聚合方法，也不直接设置桌面应用阈值。
 
@@ -43,6 +44,30 @@
 | 平均特征提取耗时 | 32.81 ms/图 | 32.29 ms/图 |
 
 两边有效集略有不同，因此主要退化结论使用 5,871 个共同有效 Pair，而不是直接相减两组不同分母的准确率。
+
+## 推理子阶段优化实验
+
+原始 `FaceAnalysis` 在每张图上除检测和识别外，还执行了本项目未使用的性别年龄、
+二维关键点和三维关键点模型。当前实现通过 `allowed_modules` 只执行
+`detection` 与 `recognition`；检测器自身输出的五点关键点仍用于识别模型对齐，
+所以没有删掉人脸对齐步骤。
+
+为避免用不同样本或缓存命中制造虚假加速，优化后使用独立空缓存重新处理完全相同的
+7,263 张 XQLFW 图片，并与优化前缓存逐条连接比较：
+
+| 指标 | 优化前 | 优化后 | 变化 |
+| --- | ---: | ---: | ---: |
+| 有效 embedding 平均耗时 | 32.293 ms/图 | 23.896 ms/图 | **-26.0%** |
+| 完整提取墙钟时间 | 239.93 s | 179.45 s | **-25.2%** |
+| 有效 embedding | 7,200 | 7,200 | 0 |
+| 模型 FTE | 63 | 63 | 0 |
+| 官方有效 Pair | 5,894 | 5,894 | 0 |
+| 10 折验证准确率 | 94.1636% | 94.1636% | 0 |
+
+两份缓存的 7,263 条状态、文件哈希、人脸数量、质量指标及 embedding BLOB
+逐项比较均为零差异。这证明该改动减少了未使用模型的逐图计算，没有改变当前检测、
+对齐、embedding 或验证结果。这里测得的是**人脸模型推理子阶段**，不是包含摄像头
+取帧、数据库检索、日志和 UI 刷新的完整 E2E；E2E 仍需在桌面应用链路单独计时。
 
 ## 共同 Pair 的错误变化
 
@@ -101,6 +126,9 @@ XQLFW 的 10 个训练折阈值位于 `0.1331～0.1416`，原始 LFW 同协议�
 - `data/experiments/phase5/xqlfw_evaluation_report.json`；
 - `data/experiments/phase5/lfw_xqlfw_pairs_baseline_report.json`；
 - `data/experiments/phase5/xqlfw_domain_comparison.json`。
+- `data/logs/cache/xqlfw_raw_optimized.sqlite`；
+- `data/experiments/phase5/xqlfw_optimized_extraction_manifest.json`；
+- `data/experiments/phase5/xqlfw_optimized_evaluation_report.json`。
 
 ```bash
 .venv/bin/python scripts/extract_xqlfw_raw_embeddings.py --data-dir ./data

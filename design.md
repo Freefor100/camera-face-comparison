@@ -38,7 +38,11 @@ embedding L2 归一化
 亮度、对比度等质量评估
 ```
 
-当前模型从 `data/models/buffalo_l/` 加载。Linux NVIDIA 环境由 ONNX Runtime 优先使用 CUDA；程序在模型准备后检查 InsightFace session 的实际 provider，CUDA 不可用时回退 CPU，并将实际后端写入评测报告。本地模型目录包含 `det_10g.onnx`、`w600k_r50.onnx` 等文件。
+当前模型从 `data/models/buffalo_l/` 加载。`FaceAnalysis` 只执行 `detection` 与
+`recognition` 模块，不逐图执行应用没有读取的性别年龄、二维关键点和三维关键点模型。
+Linux NVIDIA 环境由 ONNX Runtime 优先使用 CUDA，并保留 CPU 作为不支持算子的回退；
+程序在模型准备后检查 InsightFace session 的实际 provider，并将后端写入评测报告。
+本地检测和识别模型分别为 `det_10g.onnx` 与 `w600k_r50.onnx`。
 
 应用代码没有单独实现对齐器，也不保存对齐后的 112×112 人脸。InsightFace 的识别模型适配器在提取 embedding 时调用五点对齐和模型输入归一化；应用层只接收边界框、检测分数、关键点和最终 embedding。
 
@@ -229,3 +233,7 @@ Phase 4 新增 `scripts/extract_lfw_raw_embeddings.py` 和 `RawEmbeddingCache`�
 `scripts/extract_xqlfw_raw_embeddings.py` 只提取官方 6,000 对引用的 7,263 张去重图片，使用与 LFW 相同的 `RawEmbeddingCache` 和最大主体脸规则，不应用桌面质量门。`scripts/evaluate_xqlfw.py` 是 cache-only 入口，读取数据集随附的逐图质量分；每一折只用其他九折的实际相似度断点选择验证阈值，再在当前折统计结果。它保存每个 Pair 的相似度、折次阈值、预测、最低质量和质量分差。
 
 `scripts/compare_xqlfw_domains.py` 按折次和图片路径连接原始 LFW 与 XQLFW 报告，只在两边都成功提取的共同 Pair 上比较准确率、错误转移和相似度变化。当前全量结果为 XQLFW 有效图片 7,200/7,263、有效 Pair 5,894/6,000、10 折准确率 94.16%；共同 5,871 对中，原始 LFW 为 98.48%，XQLFW 为 94.14%。该结果只描述 1:1 跨质量退化，不修改 1:N 应用阈值。
+
+同一批 XQLFW 图片在只执行检测和识别模块后，有效 embedding 平均提取耗时从
+32.293 ms 降至 23.896 ms；两份缓存的检测状态、人脸数量、质量指标和 embedding
+逐条一致，官方验证准确率不变。该测量仅覆盖模型推理子阶段，不代表应用 E2E 耗时。

@@ -34,6 +34,7 @@
 | LFW Phase 2 无阈值结果 | 有效 Gallery 4,735；有效 Probe 3,842；六方法 23,052 条 | 已完成；身份互斥分区和拒绝项已保存 | `data/experiments/phase2/` |
 | LFW Phase 4 自然原始结果 | 有效 Gallery 7,465；有效 Probe 5,720；六方法 34,320 条 | 已完成；无质量预筛，已完成联合标定和一次独立 Evaluation | `data/experiments/phase4/` |
 | XQLFW 全量跨质量实验 | 7,263 张、6,000 对；有效 7,200 张、5,894 对 | 已完成 CUDA 原始提取、官方 10 折验证及与原始 LFW 的 5,871 个共同 Pair 对比 | `data/experiments/phase5/` |
+| XQLFW 推理子阶段优化 | 同一 7,263 张图片、独立空缓存 | 只执行检测与识别后，有效 embedding 平均耗时下降 26.0%；embedding 与验证结果不变 | `data/experiments/phase5/xqlfw_optimized_*` |
 | QMUL 官方协议 | 全部官方 MAT 标签和目录 | 已核验 | `data/logs/qmul_survface_protocol.json` |
 | QMUL 默认门压力预检 | 60,294 张 Gallery | `min_face_size=112` 下无有效 Gallery；作为域限制证据，正式分析在 Phase 5 | 缓存位于 `data/logs/cache/qmul_survface.sqlite`，没有有效识别报告 |
 
