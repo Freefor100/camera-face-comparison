@@ -63,6 +63,15 @@ class CalibrationReport:
 
 
 @dataclass(frozen=True)
+class SelectedOperatingPoint:
+    """按统一优先级从 Calibration 报告中选出的唯一部署候选。"""
+
+    method: str
+    top_k: int
+    operating_point: OperatingPoint
+
+
+@dataclass(frozen=True)
 class FixedPointEvaluation:
     """把 Calibration 选定参数原样应用到独立分区后的结果。"""
 
@@ -249,6 +258,40 @@ def compare_methods(
     )
 
 
+def select_best_operating_point(
+    report: CalibrationReport,
+    *,
+    target_fpir: float,
+) -> SelectedOperatingPoint:
+    """按课程实验预先约定的顺序选择唯一工作点。
+
+    参数：
+        report：只由 Calibration 分区生成的比较报告。
+        target_fpir：本次选择采用的 FPIR 上限。
+    返回：
+        聚合方法、Top-K 参数和对应工作点。
+
+    选择顺序为满足目标、Known TPIR、更简单的仅阈值规则、模板紧凑度和检索开销。
+    该函数不读取分数库，因此不可能在选择阶段看到 Evaluation 标签。
+    """
+
+    candidates = [
+        SelectedOperatingPoint(variant.method, variant.top_k, point)
+        for variant in report.variants
+        for point in variant.operating_points
+        if abs(point.target_fpir - target_fpir) <= 1e-12
+    ]
+    if not candidates:
+        raise ValueError(f"calibration report does not contain target FPIR: {target_fpir}")
+
+    meeting = [candidate for candidate in candidates if candidate.operating_point.meets_target]
+    pool = meeting or candidates
+    return min(
+        pool,
+        key=lambda candidate: _selection_key(candidate, target_is_met=bool(meeting)),
+    )
+
+
 def evaluate_operating_point(
     path: Path,
     *,
@@ -336,6 +379,33 @@ def available_run_ids(path: Path) -> tuple[str, ...]:
     finally:
         connection.close()
     return tuple(str(row[0]) for row in rows)
+
+
+def _selection_key(
+    selected: SelectedOperatingPoint,
+    *,
+    target_is_met: bool,
+) -> tuple[float | int, ...]:
+    """生成稳定选择键；只有所有方案失败时才先比较实际 FPIR。"""
+
+    point = selected.operating_point
+    method_cost = {
+        "mean_prototype": 0,
+        "single": 1,
+        "max": 2,
+        "top_k_mean": 3 + selected.top_k,
+    }.get(selected.method, 100)
+    failure_fpir = 0.0 if target_is_met else point.fpir
+    return (
+        failure_fpir,
+        -point.tpir,
+        int(point.use_score_gap),
+        method_cost,
+        point.known_wrong_accepts,
+        point.unknown_false_accepts,
+        point.match_threshold,
+        point.min_score_gap,
+    )
 
 
 def _acceptance_count_matrices(
