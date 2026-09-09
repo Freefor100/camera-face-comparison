@@ -22,6 +22,7 @@ from camera_face_comparison.evaluation_cache import (
     available_cache_extraction_ids,
     embedding_extraction_id,
     file_sha256,
+    quality_policy_id,
     write_json_atomic,
 )
 from camera_face_comparison.lfw_dataset import (
@@ -56,6 +57,8 @@ def main() -> int:
     cache_path = args.cache_path or settings.logs_dir / "cache" / "lfw.sqlite"
     output_dir = args.output_dir or settings.data_dir / "experiments" / "phase2"
     dataset_dir = settings.data_dir / "datasets" / "lfw_funneled"
+    extraction_settings = replace(settings, min_face_size_px=args.min_face_size)
+    cache_quality_policy_id = quality_policy_id(extraction_settings)
     try:
         source_protocol = read_lfw_protocol(source_protocol_path)
         split_protocol = split_lfw_protocol(
@@ -70,6 +73,7 @@ def main() -> int:
         cache_extraction_id = _select_cache_extraction_id(
             cache_path,
             dataset_id="lfw-full-open-set-v1",
+            quality_policy_id=cache_quality_policy_id,
             requested=args.cache_extraction_id,
         )
         run_id = f"lfw-phase2-{split_protocol_sha256[:12]}-{_safe_id(cache_extraction_id)}"
@@ -77,6 +81,7 @@ def main() -> int:
             cache_path,
             "lfw-full-open-set-v1",
             cache_extraction_id,
+            cache_quality_policy_id,
         ) as cache:
             summary = export_lfw_decision_scores(
                 dataset_dir=dataset_dir,
@@ -93,7 +98,6 @@ def main() -> int:
         print(str(error), file=sys.stderr)
         return 1
 
-    extraction_settings = replace(settings, min_face_size_px=args.min_face_size)
     manifest = {
         "artifact": "lfw-threshold-free-decision-scores-v1",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -108,6 +112,7 @@ def main() -> int:
         "cache_dataset_id": "lfw-full-open-set-v1",
         "selected_cache_extraction_id": cache_extraction_id,
         "current_embedding_extraction_id": embedding_extraction_id(extraction_settings),
+        "quality_policy_id": cache_quality_policy_id,
         "quality_configuration": {
             "min_detection_score": extraction_settings.min_detection_score,
             "min_face_size_px": extraction_settings.min_face_size_px,
@@ -158,10 +163,16 @@ def main() -> int:
     return 0
 
 
-def _select_cache_extraction_id(path: Path, *, dataset_id: str, requested: str | None) -> str:
+def _select_cache_extraction_id(
+    path: Path,
+    *,
+    dataset_id: str,
+    quality_policy_id: str,
+    requested: str | None,
+) -> str:
     """选择明确的缓存批次；多批次并存时要求调用者指定。"""
 
-    available = available_cache_extraction_ids(path, dataset_id)
+    available = available_cache_extraction_ids(path, dataset_id, quality_policy_id)
     if requested is not None:
         if requested not in available:
             raise ValueError(

@@ -73,7 +73,7 @@ def assess_quality(
     observation: FaceObservation,
     settings: Settings,
 ) -> QualityProfile:
-    """根据配置中的可复现指标评估检测到的人脸质量。
+    """测量人脸质量并应用当前质量策略。
 
     参数：
         frame：原始 BGR 图像。
@@ -85,18 +85,45 @@ def assess_quality(
         `observation.bbox` 必须对应当前图像中的有效区域。
     """
 
+    return apply_quality_policy(measure_quality(frame, observation), settings)
+
+
+def measure_quality(
+    frame: np.ndarray,
+    observation: FaceObservation,
+) -> dict[str, float]:
+    """返回不依赖任何质量阈值的原始人脸指标。
+
+    参数：
+        frame：原始 BGR 图像。
+        observation：模型在当前图像中产生的人脸观察对象。
+    返回：
+        检测置信度、人脸尺寸、清晰度、亮度和对比度组成的数值字典。
+    前置条件：
+        `observation.bbox` 必须对应当前图像中的有效区域。
+    """
+
     crop = _crop_to_bbox(frame, observation.bbox)
-    brightness = float(crop.mean())
-    contrast = float(crop.std())
     left, top, right, bottom = observation.bbox
-    face_size = min(right - left, bottom - top)
-    metrics = {
+    return {
         "detection_score": observation.detection_score,
-        "face_size_px": face_size,
+        "face_size_px": min(right - left, bottom - top),
         "blur_variance": observation.blur_variance,
-        "brightness": brightness,
-        "contrast": contrast,
+        "brightness": float(crop.mean()),
+        "contrast": float(crop.std()),
     }
+
+
+def apply_quality_policy(metrics: dict[str, float], settings: Settings) -> QualityProfile:
+    """把当前硬门和启发式分层应用到一组既有质量测量值。
+
+    参数：
+        metrics：`measure_quality()` 产生的五项原始指标。
+        settings：当前质量门和分层阈值。
+    返回：
+        接收层级、启发式质量分、原始指标和拒绝原因。
+    """
+
     reasons = _hard_failure_reasons(metrics, settings)
     if reasons:
         return QualityProfile("reject", 0.0, metrics, tuple(reasons))

@@ -13,6 +13,7 @@ from camera_face_comparison.config import load_settings
 from camera_face_comparison.evaluation_cache import (
     EvaluationEmbeddingCache,
     embedding_extraction_id,
+    quality_policy_id,
     write_json_atomic,
 )
 from camera_face_comparison.experiment import (
@@ -83,6 +84,7 @@ def main() -> int:
             cache_path,
             "lfw-full-open-set-v1",
             embedding_extraction_id(evaluation_settings),
+            quality_policy_id(evaluation_settings),
         ) as cache:
             face_engine = FaceEngine.from_local_model(evaluation_settings)
             if args.stream:

@@ -65,7 +65,7 @@
 
 - [x] 使用 LFW 全量源协议固定 Gallery、Known Probe 和 Unknown Probe。
 - [x] 在质量过滤前按身份固定 Calibration/Evaluation；同一 Known 或 Unknown 来源身份不跨分区。
-- [x] 拆分 `embedding_extraction_id` 与 `decision_policy_id`，判定参数变化不再使 embedding 缓存失效。
+- [x] 拆分 `embedding_extraction_id`、`quality_policy_id` 与 `decision_policy_id`，质量门和判定参数不再伪装成模型配置变化。
 - [x] 从现有 8,577 条有效缓存生成 3,842 张有效 Probe 的无阈值结果，不重新运行 InsightFace。
 - [x] 保存 Single、Max、Mean Prototype、Top-K Mean K=2/3/5，共 23,052 条第一/第二候选分数。
 - [x] 保存 1,901 条 Probe 与 2,755 条 Gallery 拒绝记录、协议哈希、质量配置和代码版本。
@@ -74,9 +74,10 @@
 
 ### Phase 3：质量门与入库拒绝规则验证
 
-- [ ] 固定 300 个同时具有有效 Gallery 与 Probe 的 LFW 身份，分别改变 Probe 和入库参考图。
+- [x] 将原始质量测量与质量策略判定拆开，保持应用现有行为不变。
+- [ ] 使用 Calibration 中全部 116 个有效 Known 身份和固定选择的 300 个 Unknown 身份，分别改变 Probe 和入库参考图；不读取 Evaluation。
 - [ ] 单因素测试人脸尺寸、模糊、亮度和对比度，不制造全因素笛卡尔组合。
-- [ ] 记录检测成功率/FTE、质量拒绝率、同人相似度、Rank-1/TPIR、Unknown FPIR 和低质量参考图影响。
+- [ ] 记录检测成功率/FTE、质量拒绝率、同人相似度、Rank-1、Unknown 最高候选分数分布和低质量参考图影响；最终 FPIR 留到 Phase 4 工作点统计。
 - [ ] 从实际指标断点比较硬门候选值，量化“错误减少量”和“额外拒绝量”。
 - [ ] 检查启发式 `quality_score` 与识别错误的单调关系及 Error-versus-Reject 曲线。
 - [ ] 冻结质量规则；无证据的软质量加权不进入主算法。

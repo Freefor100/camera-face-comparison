@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import replace
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
@@ -14,7 +15,11 @@ from camera_face_comparison.face_engine import (
     FaceObservation,
     validate_single_face,
 )
-from camera_face_comparison.image_input import assess_quality
+from camera_face_comparison.image_input import (
+    apply_quality_policy,
+    assess_quality,
+    measure_quality,
+)
 from camera_face_comparison.runtime import ExecutionBackend
 
 
@@ -155,3 +160,35 @@ def test_quality_profile_rejects_an_underexposed_face(tmp_path) -> None:
 
     assert profile.tier == "reject"
     assert "underexposed" in profile.reasons
+
+
+def test_quality_measurement_is_independent_from_policy_thresholds(tmp_path) -> None:
+    """调整质量门时不能改变同一张图片测得的原始指标。"""
+
+    settings = load_settings(tmp_path)
+    frame = np.full((240, 320, 3), 90, dtype=np.uint8)
+
+    metrics = measure_quality(frame, _face())
+    accepted = apply_quality_policy(
+        metrics,
+        replace(
+            settings,
+            min_brightness=80.0,
+            min_contrast=0.0,
+            medium_quality_score=0.0,
+        ),
+    )
+    rejected = apply_quality_policy(
+        metrics,
+        replace(
+            settings,
+            min_brightness=100.0,
+            min_contrast=0.0,
+            medium_quality_score=0.0,
+        ),
+    )
+
+    assert metrics["brightness"] == 90.0
+    assert accepted.tier != "reject"
+    assert rejected.tier == "reject"
+    assert rejected.reasons == ("underexposed",)

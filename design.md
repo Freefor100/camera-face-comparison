@@ -189,12 +189,13 @@ SQLite 开启外键、WAL、5 秒 busy timeout 和 `BEGIN IMMEDIATE` 写事务�
 - 同身份的其他图片作为 Known Probe；
 - 完全不进入 Gallery 的身份作为 Unknown Probe。
 
-`scripts/evaluate_lfw.py` 使用与应用相同的 `FaceEngine` 和质量规则提取真实 embedding；`EvaluationEmbeddingCache` 按图片 SHA-256 保存有效向量或拒绝原因。当前缓存标识已拆分为：
+`scripts/evaluate_lfw.py` 使用与应用相同的 `FaceEngine` 和质量规则提取真实 embedding；`EvaluationEmbeddingCache` 按图片 SHA-256 保存有效向量或拒绝原因。该缓存保存的是经过特定质量策略筛选后的结果，因此缓存键同时包含三类标识：
 
-- `embedding_extraction_id`：模型、检测、对齐和质量过滤配置；
+- `embedding_extraction_id`：模型、检测输入、对齐和 embedding 归一化实现；
+- `quality_policy_id`：检测置信度、尺寸、清晰度、亮度、对比度和启发式分层规则；
 - `decision_policy_id`：聚合、匹配阈值、候选分差和质量层判定配置。
 
-匹配阈值、候选分差或 K 变化不会改变 `embedding_extraction_id`。
+质量门、匹配阈值、候选分差或 K 变化都不会改变 `embedding_extraction_id`。改变质量策略会进入新的质量策略缓存分区。
 
 评测构建 Gallery 时，只要某个身份至少有 1 张图片成功提取 embedding，该身份就会进入 Gallery；其余失败图片会单独记录为 enrollment rejection。协议生成器可以为每个身份分配多张图片，但这不是激活门槛。
 

@@ -24,32 +24,41 @@ class CacheEntry:
 
 
 class EvaluationEmbeddingCache:
-    """使用 SQLite 保存可恢复评测 embedding，不参与应用业务数据库。"""
+    """使用 SQLite 保存经过指定质量策略筛选的可恢复评测结果。"""
 
-    def __init__(self, path: Path, dataset_id: str, embedding_extraction_id: str) -> None:
+    def __init__(
+        self,
+        path: Path,
+        dataset_id: str,
+        embedding_extraction_id: str,
+        quality_policy_id: str,
+    ) -> None:
         """打开评测缓存并建立当前版本的表结构。
 
         参数：
             path：评测缓存数据库路径。
             dataset_id：数据集和协议的稳定标识。
-            embedding_extraction_id：模型、检测和质量过滤组成的稳定标识。
+            embedding_extraction_id：模型、检测、对齐和特征提取的稳定标识。
+            quality_policy_id：质量硬门和启发式分层规则的稳定标识。
         返回：
             无；实例持有一个打开的 SQLite 连接。
         前置条件：
             父目录可创建，且数据集与特征提取标识非空。
         """
 
-        if not dataset_id or not embedding_extraction_id:
-            raise ValueError("dataset_id and embedding_extraction_id must not be empty")
+        if not dataset_id or not embedding_extraction_id or not quality_policy_id:
+            raise ValueError("cache identifiers must not be empty")
         path.parent.mkdir(parents=True, exist_ok=True)
         self._dataset_id = dataset_id
         self._embedding_extraction_id = embedding_extraction_id
+        self._quality_policy_id = quality_policy_id
         self._connection = sqlite3.connect(path, timeout=30.0)
         self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS evaluation_embeddings (
                 dataset_id TEXT NOT NULL,
                 embedding_extraction_id TEXT NOT NULL,
+                quality_policy_id TEXT NOT NULL,
                 relative_path TEXT NOT NULL,
                 file_sha256 TEXT NOT NULL,
                 status TEXT NOT NULL CHECK(status IN ('valid', 'rejected')),
@@ -57,7 +66,9 @@ class EvaluationEmbeddingCache:
                 embedding_dim INTEGER,
                 quality_json TEXT,
                 reason TEXT,
-                PRIMARY KEY (dataset_id, embedding_extraction_id, relative_path)
+                PRIMARY KEY (
+                    dataset_id, embedding_extraction_id, quality_policy_id, relative_path
+                )
             )
             """
         )
@@ -79,9 +90,15 @@ class EvaluationEmbeddingCache:
             """
             SELECT file_sha256, status, embedding_blob, embedding_dim, quality_json, reason
             FROM evaluation_embeddings
-            WHERE dataset_id = ? AND embedding_extraction_id = ? AND relative_path = ?
+            WHERE dataset_id = ? AND embedding_extraction_id = ?
+              AND quality_policy_id = ? AND relative_path = ?
             """,
-            (self._dataset_id, self._embedding_extraction_id, relative_path),
+            (
+                self._dataset_id,
+                self._embedding_extraction_id,
+                self._quality_policy_id,
+                relative_path,
+            ),
         ).fetchone()
         if row is None or row[0] != file_sha256:
             return None
@@ -172,10 +189,12 @@ class EvaluationEmbeddingCache:
         self._connection.execute(
             """
             INSERT INTO evaluation_embeddings (
-                dataset_id, embedding_extraction_id, relative_path, file_sha256, status,
-                embedding_blob, embedding_dim, quality_json, reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(dataset_id, embedding_extraction_id, relative_path) DO UPDATE SET
+                dataset_id, embedding_extraction_id, quality_policy_id, relative_path,
+                file_sha256, status, embedding_blob, embedding_dim, quality_json, reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(
+                dataset_id, embedding_extraction_id, quality_policy_id, relative_path
+            ) DO UPDATE SET
                 file_sha256 = excluded.file_sha256,
                 status = excluded.status,
                 embedding_blob = excluded.embedding_blob,
@@ -186,6 +205,7 @@ class EvaluationEmbeddingCache:
             (
                 self._dataset_id,
                 self._embedding_extraction_id,
+                self._quality_policy_id,
                 relative_path,
                 file_sha256,
                 status,
@@ -208,14 +228,25 @@ def file_sha256(path: Path) -> str:
 
 
 def embedding_extraction_id(settings: Settings, base_model: str = "buffalo_l") -> str:
-    """生成只描述检测、特征提取和质量过滤行为的稳定标识。
+    """生成只描述检测、对齐和特征提取实现的稳定标识。
 
-    匹配阈值、候选分差和人员聚合参数不会改变图片 embedding，因此不得进入
-    此标识。修改这些判定参数后可以继续复用已完成的特征缓存。
+    数值质量门、匹配阈值、候选分差和人员聚合参数都不会改变模型产生的
+    embedding，因此不得进入此标识。
     """
 
     payload = {
         "base_model": base_model,
+        "detector_input_size": [640, 640],
+        "alignment": "insightface-default-five-point",
+        "embedding_normalization": "l2",
+    }
+    return _identifier(base_model, payload)
+
+
+def quality_policy_id(settings: Settings) -> str:
+    """生成描述质量硬门和启发式分层规则的稳定标识。"""
+
+    payload = {
         "min_detection_score": settings.min_detection_score,
         "min_face_size_px": settings.min_face_size_px,
         "min_blur_variance": settings.min_blur_variance,
@@ -225,7 +256,7 @@ def embedding_extraction_id(settings: Settings, base_model: str = "buffalo_l") -
         "high_quality_score": settings.high_quality_score,
         "medium_quality_score": settings.medium_quality_score,
     }
-    return _identifier(base_model, payload)
+    return _identifier("quality", payload)
 
 
 def decision_policy_id(
@@ -251,7 +282,11 @@ def decision_policy_id(
     return _identifier("decision", payload)
 
 
-def available_cache_extraction_ids(path: Path, dataset_id: str) -> tuple[str, ...]:
+def available_cache_extraction_ids(
+    path: Path,
+    dataset_id: str,
+    quality_policy_id: str,
+) -> tuple[str, ...]:
     """列出一个现有缓存中指定数据集的特征提取标识。
 
     该函数只查询缓存，不创建数据库，供 cache-only 导出显式选择已经完成的
@@ -264,8 +299,8 @@ def available_cache_extraction_ids(path: Path, dataset_id: str) -> tuple[str, ..
     try:
         rows = connection.execute(
             "SELECT DISTINCT embedding_extraction_id FROM evaluation_embeddings "
-            "WHERE dataset_id = ? ORDER BY embedding_extraction_id",
-            (dataset_id,),
+            "WHERE dataset_id = ? AND quality_policy_id = ? ORDER BY embedding_extraction_id",
+            (dataset_id, quality_policy_id),
         ).fetchall()
     except sqlite3.OperationalError:
         return ()

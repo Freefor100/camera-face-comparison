@@ -16,13 +16,14 @@ from camera_face_comparison.evaluation_cache import (
     decision_policy_id,
     embedding_extraction_id,
     file_sha256,
+    quality_policy_id,
 )
 from camera_face_comparison.image_input import QualityProfile
 from camera_face_comparison.lfw_dataset import LfwSplitProbe, LfwSplitProtocol
 
 
-def test_embedding_cache_id_ignores_decision_parameters(tmp_path) -> None:
-    """匹配阈值、候选分差和 K 变化不能使已经提取的 embedding 失效。"""
+def test_embedding_id_ignores_quality_and_decision_parameters(tmp_path) -> None:
+    """质量门和判定参数变化都不能伪装成模型重新提取。"""
 
     settings = load_settings(tmp_path / "data")
     changed_decision = replace(
@@ -34,7 +35,8 @@ def test_embedding_cache_id_ignores_decision_parameters(tmp_path) -> None:
     changed_quality = replace(settings, min_face_size_px=80)
 
     assert embedding_extraction_id(settings) == embedding_extraction_id(changed_decision)
-    assert embedding_extraction_id(settings) != embedding_extraction_id(changed_quality)
+    assert embedding_extraction_id(settings) == embedding_extraction_id(changed_quality)
+    assert quality_policy_id(settings) != quality_policy_id(changed_quality)
     assert decision_policy_id(settings) != decision_policy_id(changed_decision)
     assert decision_policy_id(settings, aggregation_method="max") != decision_policy_id(
         settings, aggregation_method="mean_prototype"
@@ -94,7 +96,7 @@ def test_cache_only_export_saves_six_threshold_free_scores_and_rejections(tmp_pa
         paths["unknown"]: np.array([0.70710677, 0.70710677], dtype=np.float32),
     }
     cache_path = tmp_path / "embeddings.sqlite"
-    with EvaluationEmbeddingCache(cache_path, "lfw", "model-a") as cache:
+    with EvaluationEmbeddingCache(cache_path, "lfw", "model-a", "quality-a") as cache:
         for relative_path, embedding in embeddings.items():
             cache.put_valid(
                 relative_path,

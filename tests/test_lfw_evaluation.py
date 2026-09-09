@@ -126,7 +126,9 @@ def test_streaming_lfw_evaluation_reuses_cached_embeddings(tmp_path) -> None:
     engine = CountingMarkerFaceEngine()
     cache_path = tmp_path / "cache.sqlite"
 
-    with EvaluationEmbeddingCache(cache_path, "lfw", "buffalo_l:80") as cache:
+    with EvaluationEmbeddingCache(
+        cache_path, "lfw", "buffalo_l:80", "quality:default"
+    ) as cache:
         evaluate_lfw_protocol_streaming(
             dataset_dir=dataset_dir,
             protocol=protocol,
