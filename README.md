@@ -2,7 +2,7 @@
 
 离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序从外置摄像头或本地图片读取人脸，在本地标准库中检索已录入人员；证据不足时输出“未知人员”，不会强行给出姓名。
 
-当前版本先保证主链路可运行，再按依赖顺序完成质量验证、联合标定、鲁棒性扩展和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，阶段实验见 [Phase 2 结果](docs/phase-2-results.md)、[Phase 3 结果](docs/phase-3-results.md)与 [Phase 4 结果](docs/phase-4-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
+当前版本先保证主链路可运行，再按依赖顺序完成质量验证、联合标定、鲁棒性扩展和最终展示。当前代码的准确流程见 [design.md](design.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，阶段实验见 [Phase 2 结果](docs/phase-2-results.md)、[Phase 3 结果](docs/phase-3-results.md)、[Phase 4 结果](docs/phase-4-results.md)与 [Phase 5 XQLFW 结果](docs/phase-5-xqlfw-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
 
 ## 项目目标
 
@@ -41,6 +41,7 @@
 - Phase 2 的 3,842 张有效 Probe 结果保留为“质量预筛为何会污染实验”的历史诊断。Phase 4 已重建与质量策略无关的 13,185 张自然 LFW embedding，并保存 5,720 张有效 Probe 的六种无阈值结果。
 - Phase 3 已完成 10,108 条正式单因素质量测量。结果证明当前启发式质量门严重过严，`quality_score` 不应作为主算法的拒绝、加权或分层阈值依据；部署摄像头硬门仍需在真实摄像头域复核。
 - Phase 4 在 Calibration 上选出 LFW 大 Gallery 条件下的 `Mean Prototype + score_gap` 候选，并在独立 Evaluation 达到 `FPIR=0.252%`、`TPIR=48.45%`。Gallery 规模和摄像头域不同，因此尚未写入应用配置。
+- Phase 5 的 XQLFW 全量实验已完成：共同有效 5,871 对上，原始 LFW 到跨质量变体的 10 折验证准确率由 98.48% 降至 94.14%，同人相似度均值下降 0.2594。
 
 ## 阶段 TODO
 
@@ -98,7 +99,8 @@
 
 ### Phase 5：鲁棒性扩展、耗时与 UI 收尾
 
-- [ ] 使用 XQLFW 分析真实跨质量退化，使用 QMUL-SurvFace 记录监控小脸域覆盖限制。
+- [x] 使用 XQLFW 官方 6,000 对完成真实跨质量分析，并与原始 LFW 的同协议、共同有效 Pair 比较。
+- [ ] 使用 QMUL-SurvFace 记录监控小脸域的模型覆盖和系统限制。
 - [ ] 使用非最终演示人员建立临时摄像头开发集，检查 LFW 候选规则在小 Gallery 和桌面域是否偏移。
 - [ ] 实现“短时间多帧采集 + 质量择优”，以单帧为基线做相同人员、场景、方法和阈值的复测。
 - [ ] 记录输入、检测、特征、检索、判定、日志和 UI 的分阶段及 E2E 耗时，只优化实测瓶颈。
@@ -270,11 +272,12 @@ python scripts/evaluate_selected_operating_point.py \
   --target-fpir 0.003
 ```
 
-XQLFW 使用官方 6,000 对及其涉及的全部图片；QMUL 使用官方 Gallery、Mated Probe 和 Unmated Probe：
+XQLFW 使用官方 6,000 对、原始无质量门缓存和 10 折阈值；QMUL 使用官方 Gallery、Mated Probe 和 Unmated Probe：
 
 ```bash
-python scripts/evaluate_xqlfw.py --data-dir ./data --min-face-size 80 \
-  --cache-path ./data/logs/cache/xqlfw.sqlite
+python scripts/extract_xqlfw_raw_embeddings.py --data-dir ./data
+python scripts/evaluate_xqlfw.py --data-dir ./data
+python scripts/compare_xqlfw_domains.py
 python scripts/prepare_qmul.py --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
 python scripts/evaluate_qmul.py --data-dir ./data \
   --cache-path ./data/logs/cache/qmul_survface.sqlite

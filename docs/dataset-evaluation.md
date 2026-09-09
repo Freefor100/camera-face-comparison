@@ -33,7 +33,7 @@
 | LFW 固定阈值历史诊断 | Gallery 7,490、Probe 5,743 | 已完成；结果依赖初始阈值，不作最终方法结论 | `data/logs/lfw_full_algorithm_baseline.json` |
 | LFW Phase 2 无阈值结果 | 有效 Gallery 4,735；有效 Probe 3,842；六方法 23,052 条 | 已完成；身份互斥分区和拒绝项已保存 | `data/experiments/phase2/` |
 | LFW Phase 4 自然原始结果 | 有效 Gallery 7,465；有效 Probe 5,720；六方法 34,320 条 | 已完成；无质量预筛，已完成联合标定和一次独立 Evaluation | `data/experiments/phase4/` |
-| XQLFW 全量预检 | 7,263 张、6,000 对 | 已完成 CUDA 链路预检；仅 2,296 张图片、4 对通过现有质量门，正式分析在 Phase 5 | `data/logs/xqlfw_full_evaluation_report.json` |
+| XQLFW 全量跨质量实验 | 7,263 张、6,000 对；有效 7,200 张、5,894 对 | 已完成 CUDA 原始提取、官方 10 折验证及与原始 LFW 的 5,871 个共同 Pair 对比 | `data/experiments/phase5/` |
 | QMUL 官方协议 | 全部官方 MAT 标签和目录 | 已核验 | `data/logs/qmul_survface_protocol.json` |
 | QMUL 默认门压力预检 | 60,294 张 Gallery | `min_face_size=112` 下无有效 Gallery；作为域限制证据，正式分析在 Phase 5 | 缓存位于 `data/logs/cache/qmul_survface.sqlite`，没有有效识别报告 |
 
@@ -98,13 +98,9 @@ LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,
 XQLFW：
 
 ```bash
-.venv/bin/python scripts/evaluate_xqlfw.py \
-  --data-dir ./data \
-  --dataset-dir ./data/datasets/xqlfw/lfw_original_imgs_min_qual0.85variant11 \
-  --pairs ./data/datasets/xqlfw/xqlfw_pairs.txt \
-  --min-face-size 80 \
-  --cache-path ./data/logs/cache/xqlfw.sqlite \
-  --report-output ./data/logs/xqlfw_full_evaluation_report.json
+.venv/bin/python scripts/extract_xqlfw_raw_embeddings.py --data-dir ./data
+.venv/bin/python scripts/evaluate_xqlfw.py --data-dir ./data
+.venv/bin/python scripts/compare_xqlfw_domains.py
 ```
 
 QMUL-SurvFace：
@@ -121,7 +117,7 @@ QMUL-SurvFace：
   --report-output ./data/logs/qmul_survface_evaluation_report.json
 ```
 
-这些入口已存在，但正式 Phase 5 必须先根据数据域定义可解释的质量覆盖分析；不能把“几乎全部拒绝”后的极小有效分母当成鲁棒性准确率。
+XQLFW 正式结果见 [Phase 5 XQLFW 结果](phase-5-xqlfw-results.md)。QMUL 正式分析仍必须先根据数据域定义可解释的模型覆盖，不能把“几乎全部拒绝”后的极小有效分母当成鲁棒性准确率。
 
 ## 5. 结果解释规则
 

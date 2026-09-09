@@ -207,7 +207,7 @@ Phase 4 新增 `scripts/extract_lfw_raw_embeddings.py` 和 `RawEmbeddingCache`�
 
 本机 Phase 2 历史 `decision_scores.sqlite` 由质量筛选缓存生成：4,735 张有效 Gallery、3,842 张有效 Probe、1,901 张 Probe 拒绝，六种方法共 23,052 条分数记录。Phase 4 的 CUDA 原始提取覆盖 13,233 张 LFW：13,185 张得到 embedding、48 张 FTE；其中 2,236 张检测到多个候选但按主体脸规则保留。新分数库包含 7,465 张有效 Gallery、5,720 张有效 Probe和 34,320 条六方法记录，使用独立目录，防止历史诊断覆盖正式实验输入。
 
-历史流式报告仍会在给定固定阈值下输出 FPIR/FNIR，但这类结果被标记为历史诊断。项目还已有 XQLFW 官方 pairs 解析、QMUL-SurvFace 官方 MAT 协议解析和相应评测入口；它们不会被 Phase 2 cache-only 导出调用。
+历史流式报告仍会在给定固定阈值下输出 FPIR/FNIR，但这类结果被标记为历史诊断。项目还已有 XQLFW 官方 pairs 解析、QMUL-SurvFace 官方 MAT 协议解析和相应评测入口；它们不会被 LFW cache-only 导出调用。
 
 ## 11. 当前开放集工作点扫描器
 
@@ -223,3 +223,9 @@ Phase 4 新增 `scripts/extract_lfw_raw_embeddings.py` 和 `RawEmbeddingCache`�
 `select_best_operating_point()` 只接收 Calibration 报告，按“满足 FPIR、最大 TPIR、不使用分差、模板紧凑和检索开销”顺序选出唯一候选。`scripts/evaluate_selected_operating_point.py` 在选择完成后才调用 `evaluate_operating_point()` 读取 Evaluation，并把选择和评估一起原子写入 JSON。
 
 本机自然 LFW 实验在主目标 `FPIR≤0.3%` 下选出 Mean Prototype 与候选分差规则：Calibration 为 FPIR 0.244%、TPIR 61.49%，独立 Evaluation 为 FPIR 0.252%、TPIR 48.45%、Rank-1 98.60%。这是 4,599 身份 LFW Gallery 下的候选；当前桌面应用仍使用原有质量加权 Top-K 和初始质量层参数，尚未因该结果修改。应用接入必须先复核少量身份 Gallery 和摄像头域偏移。
+
+## 12. 当前 XQLFW 跨质量评测
+
+`scripts/extract_xqlfw_raw_embeddings.py` 只提取官方 6,000 对引用的 7,263 张去重图片，使用与 LFW 相同的 `RawEmbeddingCache` 和最大主体脸规则，不应用桌面质量门。`scripts/evaluate_xqlfw.py` 是 cache-only 入口，读取数据集随附的逐图质量分；每一折只用其他九折的实际相似度断点选择验证阈值，再在当前折统计结果。它保存每个 Pair 的相似度、折次阈值、预测、最低质量和质量分差。
+
+`scripts/compare_xqlfw_domains.py` 按折次和图片路径连接原始 LFW 与 XQLFW 报告，只在两边都成功提取的共同 Pair 上比较准确率、错误转移和相似度变化。当前全量结果为 XQLFW 有效图片 7,200/7,263、有效 Pair 5,894/6,000、10 折准确率 94.16%；共同 5,871 对中，原始 LFW 为 98.48%，XQLFW 为 94.14%。该结果只描述 1:1 跨质量退化，不修改 1:N 应用阈值。
