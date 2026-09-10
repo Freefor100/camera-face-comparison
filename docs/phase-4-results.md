@@ -1,5 +1,7 @@
 # Phase 4 聚合方法与开放集判定联合标定结果
 
+> 本文保存自然 LFW、0.3% 严格目标下的历史基线和问题发现过程。它不是最终部署结论；四类明确接收规则、1% 主目标和跨质量联合结果见 [Phase 5B 结果](phase-5b-cross-quality-results.md)。
+
 ## 结论
 
 本阶段已完成自然 LFW 全量原始特征重建、六种人员聚合比较、开放集工作点精确扫描，以及一次独立 Evaluation。所有聚合方法使用同一 Gallery、同一 Probe、同一 InsightFace `buffalo_l` embedding，不使用启发式质量分预筛或加权。
@@ -91,14 +93,14 @@ Mean Prototype 的仅候选分差规则比同方法仅阈值多接收 `800 - 654
 | FNIR | 38.51% | 51.55% |
 | FPIR | 0.244% | 0.252% |
 
-Evaluation 达到预设 FPIR 目标，但 TPIR 比 Calibration 下降 13.04 个百分点。这不是继续读取 Evaluation 反复调参的理由，而是需要在后续摄像头域复核中保留的泛化风险。
+Evaluation 达到预设 FPIR 目标，但 TPIR 比 Calibration 下降 13.04 个百分点。这不是继续读取 Evaluation 反复调参的理由；该泛化风险随后通过 Phase 5B 的自然/XQLFW 四场景共同选参重新评估。
 
 ## 当前边界与交接
 
-- `Mean Prototype + 仅候选分差` 是自然 LFW 大 Gallery 严格工作点下的历史候选，不是已经冻结的桌面部署参数。
+- `Mean Prototype + 仅候选分差` 是自然 LFW 大 Gallery 严格工作点下的历史候选，已经被 Phase 5B 的跨质量联合标定取代。
 - `score_gap=0.5078` 对 Gallery 候选身份数量和人员组成敏感；最终只有少量身份的 Demo Gallery 不能直接声称拥有相同 FPIR/TPIR。
-- Phase 3 已否定启发式 `quality_score` 的硬拒绝、加权和质量分层阈值用途；当前桌面应用尚未删除这套旧部署策略，待摄像头开发域复核后一次性替换。
-- XQLFW 和 QMUL-SurvFace 不参与本轮方法选择或阈值标定，分别留给真实跨质量分析和监控小脸压力测试。
+- Phase 3 已否定启发式 `quality_score` 的硬拒绝、加权和质量分层阈值用途；当前桌面应用尚未删除这套旧部署策略，待 Phase 5B 运行时接入时一次性替换。
+- XQLFW 没有参与本轮历史选择，但已在 Phase 5B 与 LFW 同路径构成四个联合选参场景；QMUL-SurvFace 仍只作监控小脸压力测试。
 
 ## 复现命令
 

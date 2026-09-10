@@ -33,7 +33,9 @@
 | LFW 固定阈值历史诊断 | Gallery 7,490、Probe 5,743 | 已完成；结果依赖初始阈值，不作最终方法结论 | `data/logs/lfw_full_algorithm_baseline.json` |
 | LFW Phase 2 无阈值结果 | 有效 Gallery 4,735；有效 Probe 3,842；六方法 23,052 条 | 已完成；身份互斥分区和拒绝项已保存 | `data/experiments/phase2/` |
 | LFW Phase 4 自然原始结果 | 有效 Gallery 7,465；有效 Probe 5,720；六方法 34,320 条 | 已完成；无质量预筛，已完成联合标定和一次独立 Evaluation | `data/experiments/phase4/` |
-| LFW 小 Gallery 规模实验 | 3/5/10/25/50/100 人，每档 10 次 | 已完成身份互斥 Calibration/Evaluation；完整 Gallery 工作点迁移的 60 次 Unknown FPIR 均为 0 | `data/experiments/phase5/gallery_scale_report.json` |
+| LFW/XQLFW 跨质量开放集联合标定 | 六场景、六种聚合、四类接收规则 | 已完成；主工作点选择 Mean Prototype + 最高分阈值 `0.555786` | `data/experiments/phase5b/` |
+| 小 Gallery 稳定性复核 | 3/5/10/25/50/100 人，每档 10 次、四场景 | 已完成 Calibration-only 固定参数重放；240 个结果均满足 1% FPIR | `data/experiments/phase5b/gallery_scale_report.json` |
+| 跨质量独立 Evaluation | 六场景、三个预先冻结参考工作点 | 已执行一次；主规则最差 TPIR 66.30%、最坏 FPIR 1.43%，含身份 bootstrap 95% 区间 | `data/experiments/phase5b/evaluation_report.json` |
 | XQLFW 全量跨质量实验 | 7,263 张、6,000 对；有效 7,200 张、5,894 对 | 已完成 CUDA 原始提取、官方 10 折验证及与原始 LFW 的 5,871 个共同 Pair 对比 | `data/experiments/phase5/` |
 | XQLFW 推理子阶段优化 | 同一 7,263 张图片、独立空缓存 | 只执行检测与识别后，有效 embedding 平均耗时下降 26.0%；embedding 与验证结果不变 | `data/experiments/phase5/xqlfw_optimized_*` |
 | QMUL 官方协议 | 全部官方 MAT 标签和目录 | 已核验 | `data/logs/qmul_survface_protocol.json` |
@@ -92,10 +94,6 @@ LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,
 .venv/bin/python scripts/evaluate_selected_operating_point.py \
   --scores ./data/experiments/phase4/decision_scores.sqlite \
   --target-fpir 0.003
-.venv/bin/python scripts/evaluate_gallery_scale.py \
-  --data-dir ./data \
-  --gallery-sizes 3 5 10 25 50 100 \
-  --repeats 10
 ```
 
 前两个 Phase 2 入口保留为历史链路；正式聚合结论以 [Phase 4 结果](phase-4-results.md) 为准。
@@ -130,8 +128,27 @@ QMUL-SurvFace：
 
 正式结果见 [Phase 5 XQLFW 结果](phase-5-xqlfw-results.md)、
 [Phase 5 QMUL 结果](phase-5-qmul-results.md)和
-[Phase 5 Gallery 规模结果](phase-5-gallery-scale-results.md)。QMUL 的有效分母极小，因此不能把
+[Phase 5B 联合标定结果](phase-5b-cross-quality-results.md)。QMUL 的有效分母极小，因此不能把
 LFW 工作点产生的“FPIR=0”解释成鲁棒性准确率；它同时发生 TPIR=0 的全拒绝。
+
+Phase 5B 跨质量开放集：
+
+```bash
+.venv/bin/python scripts/extract_xqlfw_raw_embeddings.py \
+  --data-dir ./data \
+  --protocol ./data/experiments/phase4/protocol.json \
+  --cache-path ./data/logs/cache/xqlfw_full_cuda.sqlite \
+  --manifest ./data/experiments/phase5b/xqlfw_full_cuda_manifest.json
+.venv/bin/python scripts/export_cross_quality_scores.py --data-dir ./data \
+  --xqlfw-cache ./data/logs/cache/xqlfw_full_cuda.sqlite
+.venv/bin/python scripts/calibrate_cross_quality.py \
+  --scores ./data/experiments/phase5b/decision_scores.sqlite
+.venv/bin/python scripts/evaluate_gallery_scale.py --data-dir ./data \
+  --xqlfw-cache ./data/logs/cache/xqlfw_full_cuda.sqlite
+.venv/bin/python scripts/evaluate_cross_quality_policy.py \
+  --scores ./data/experiments/phase5b/decision_scores.sqlite \
+  --calibration-report ./data/experiments/phase5b/calibration_report.json
+```
 
 ## 5. 结果解释规则
 

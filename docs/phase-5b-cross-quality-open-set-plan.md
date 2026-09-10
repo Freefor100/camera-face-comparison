@@ -1,5 +1,7 @@
 # Phase 5B 跨质量开放集规则联合标定
 
+> 状态：实验已完成，结果、参数与局限性见 [Phase 5B 开放集识别规则与跨质量联合标定结果](phase-5b-cross-quality-results.md)。运行时接入仍按 README 的阶段状态执行。
+
 ## 目标
 
 在不重新训练 InsightFace 的前提下，用自然 LFW、XQLFW Probe 和混合质量 Gallery 共同选择一套可部署的人员聚合、开放集接收规则和参数。主目标为各主要 Calibration 场景的有效 Unknown `FPIR ≤ 1%`，随后最大化最差场景端到端 Known TPIR。
@@ -37,4 +39,3 @@
 ## 系统交接
 
 实验完成后，应用只接入选中的一套规则。无人脸、多人脸、图片损坏和 embedding 失败继续阻断；人脸尺寸、模糊、亮度和对比度仅记录并提示。删除启发式 `quality_score`、质量等级、质量加权 Top-K 和分层识别阈值，不兼容旧配置和开发数据库。
-
