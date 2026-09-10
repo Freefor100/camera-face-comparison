@@ -219,6 +219,19 @@ def evaluate_joint_operating_point(
     )
 
 
+def accepts_joint_score(row: JointScoreRow, selected: JointOperatingPoint) -> bool:
+    """用冻结工作点判断一条候选排序是否被接收，不执行任何重新标定。"""
+
+    return _accepted(
+        row,
+        rule=selected.rule,
+        minimum_score=selected.minimum_score,
+        minimum_gap=selected.minimum_gap,
+        minimum_probability=selected.minimum_probability,
+        nac_neighbors=selected.nac_neighbors,
+    )
+
+
 def _select_one_dimensional_candidate(
     rows: Sequence[JointScoreRow],
     *,
