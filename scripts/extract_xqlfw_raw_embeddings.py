@@ -17,6 +17,7 @@ from camera_face_comparison.evaluation_cache import (
     write_json_atomic,
 )
 from camera_face_comparison.face_engine import FaceEngine
+from camera_face_comparison.lfw_dataset import read_lfw_split_protocol
 from camera_face_comparison.raw_dataset_extraction import extract_dataset_raw_embeddings
 from camera_face_comparison.raw_embedding_cache import RawEmbeddingCache
 from camera_face_comparison.runtime import backend_metadata
@@ -32,6 +33,11 @@ def main() -> int:
     parser.add_argument("--data-dir", type=Path, default=PROJECT_ROOT / "data")
     parser.add_argument("--dataset-dir", type=Path)
     parser.add_argument("--pairs", type=Path)
+    parser.add_argument(
+        "--protocol",
+        type=Path,
+        help="可选的 LFW 身份识别分区协议；提供后提取协议引用的全部 13,233 张变体。",
+    )
     parser.add_argument("--cache-path", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--commit-every", type=int, default=100)
@@ -47,20 +53,40 @@ def main() -> int:
         / "lfw_original_imgs_min_qual0.85variant11"
     )
     pairs_path = args.pairs or settings.data_dir / "datasets" / "xqlfw" / "xqlfw_pairs.txt"
-    cache_path = args.cache_path or settings.logs_dir / "cache" / "xqlfw_raw.sqlite"
+    cache_path = args.cache_path or settings.logs_dir / "cache" / "xqlfw_raw_optimized.sqlite"
     manifest_path = args.manifest or (
         settings.data_dir / "experiments" / "phase5" / "xqlfw_raw_extraction_manifest.json"
     )
     try:
-        protocol = load_xqlfw_protocol(pairs_path, dataset_dir)
+        if args.protocol is None:
+            pair_protocol = load_xqlfw_protocol(pairs_path, dataset_dir)
+            image_paths = pair_protocol.image_paths
+            protocol_source = pairs_path
+            artifact = "xqlfw-policy-independent-raw-embeddings-v1"
+        else:
+            identification_protocol = read_lfw_split_protocol(args.protocol)
+            image_paths = tuple(
+                sorted(
+                    {
+                        *(
+                            path
+                            for paths in identification_protocol.enrollment.values()
+                            for path in paths
+                        ),
+                        *(probe.relative_path for probe in identification_protocol.probes),
+                    }
+                )
+            )
+            protocol_source = args.protocol
+            artifact = "xqlfw-full-open-set-raw-embeddings-v1"
         engine = FaceEngine.from_local_model(settings)
         extraction_id = embedding_extraction_id(settings)
         base_manifest = {
-            "artifact": "xqlfw-policy-independent-raw-embeddings-v1",
+            "artifact": artifact,
             "status": "running",
             "started_at": datetime.now(UTC).isoformat(),
-            "pairs": str(pairs_path),
-            "pairs_sha256": file_sha256(pairs_path),
+            "protocol_source": str(protocol_source),
+            "protocol_sha256": file_sha256(protocol_source),
             "dataset_dir": str(dataset_dir),
             "cache_path": str(cache_path),
             "cache_dataset_id": "xqlfw-official-pairs-v1",
@@ -77,7 +103,7 @@ def main() -> int:
         ) as cache:
             summary = extract_dataset_raw_embeddings(
                 dataset_dir=dataset_dir,
-                relative_paths=protocol.image_paths,
+                relative_paths=image_paths,
                 face_engine=engine,
                 cache=cache,
                 commit_every=args.commit_every,
