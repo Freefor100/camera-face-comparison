@@ -35,15 +35,9 @@ Phase 1 只验证现有主链路并修复可稳定复现的功能缺陷。识别
 
 ## 真实模型 LFW 回放
 
-执行命令：
-
-```bash
-.venv/bin/python scripts/evaluate_lfw.py \
-  --data-dir ./data \
-  --min-face-size 80 \
-  --scores-output data/logs/phase1_lfw_scores.jsonl \
-  --report-output data/logs/phase1_lfw_report.json
-```
+本阶段当时使用小型 pilot 入口生成下列原始结果。该入口后来被无质量预筛的 LFW 全量
+原始缓存与跨质量联合标定取代，当前可执行命令以 README 为准；本节只保留 Phase 1
+发生过的链路证据及文件哈希。
 
 原始结果保存在被 Git 忽略的 `data/logs/`：
 
@@ -106,6 +100,8 @@ Phase 1 只验证现有主链路并修复可稳定复现的功能缺陷。识别
 | `P1-UI-08` | `Adrien_Brody_0002.jpg` 提示多人脸；原始 LFW 单人脸提示脸过小；非图片文件提示打开失败 | 通过 | 原因依次为 `multiple_faces`、`face_size_below_minimum`、`could not decode image`。 |
 | `P1-UI-09` | 关闭并重启后，人员、样本、完整性状态及 Known/Unknown 链路仍可用 | 通过 | 重开后样本数仍为 Camera 2、Obama 3；完整性正常；Obama 再识别得分 0.844。 |
 
+`P1-UI-08` 记录的是 Phase 1 当时的历史行为。后续质量实验表明，不宜仅凭固定脸部尺寸或模糊阈值阻断普通桌面输入；当前版本已改为仅拒绝无法解码、无人脸、多人脸和无效特征向量，其他质量指标只提供调整提示。
+
 ## Phase 1 最终验证
 
 | 命令 | 结果 |
@@ -117,4 +113,4 @@ Phase 1 只验证现有主链路并修复可稳定复现的功能缺陷。识别
 
 ## 阶段结论
 
-Phase 1 基础链路验收完成。该结论只表示摄像头、输入、录入、识别、拒绝、持久化和 UI 状态链路可运行，不表示当前质量加权 Top-K、质量规则或阈值已经达到最终效果。`ALG-001` 已由 Phase 2 固定实验数据并转交 Phase 4 联合标定，`DATA-001` 作为已接受的数据域限制保留。Development Gallery 仅用于本阶段，最终 Demo Gallery 仍在参数冻结后建立。
+Phase 1 基础链路验收完成。该结论当时只表示摄像头、输入、录入、识别、拒绝、持久化和 UI 状态链路可运行，不把当时的聚合、质量规则或阈值写成最终效果。`ALG-001` 后续已由跨质量联合标定关闭，`DATA-001` 已通过删除无依据数值硬门关闭。Development Gallery 仅用于本阶段，最终 Demo Gallery 仍在运行时和扩展功能冻结后建立。

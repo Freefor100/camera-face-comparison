@@ -64,15 +64,15 @@
 
 早期 7 张有效 Probe 的 pilot 同样只作为链路烟雾测试：Single 为 Known 2/4，Max 与 Mean Prototype 为 4/4，历史质量加权 Top-K 为 3/4；Unknown 均为 3/3。该样本量不承担算法结论。
 
-## 5. 当前结论和交接
+## 5. 历史结论和后续完成状态
 
 Phase 2 已完成“固定数据 + 缓存 embedding + 保存无阈值候选分数”，解决了反复运行模型和阈值变化污染方法比较的问题。
 
-下一步不是立即挑选最高表格数字，而是：
+本阶段结束时确定的依赖顺序及后续完成情况为：
 
-1. Phase 3 验证人脸尺寸、模糊、亮度、对比度和启发式质量分是否真的预测识别退化，并冻结质量门；
-2. 质量门冻结后，重新生成受影响的有效 embedding/分数；
-3. Phase 4 在 Calibration 上联合选择六种聚合方法、匹配阈值及是否启用候选分差；
-4. 只把选定方案用于独立 Evaluation，报告 `FPIR ≤ 1%`、主工作点 `FPIR ≤ 0.3%` 和 Calibration 观测 `FPIR = 0%`。
+1. Phase 3 已验证人脸尺寸、模糊、亮度、对比度和旧启发式质量总分，结论是删除无依据硬门；
+2. Phase 4 已重建 13,185 条无质量预筛的自然 LFW embedding；
+3. Phase 5B 已在 Calibration 上联合比较六种聚合、四类规则和 NAC；
+4. 当前部署已选择 Mean Prototype + 最高分阈值 `0.5557855`，并只执行一次独立 Evaluation。
 
-XQLFW 和 QMUL-SurvFace 的已有运行只保留为预检，正式跨质量与极端域分析安排在 Phase 5。
+XQLFW 和 QMUL-SurvFace 的正式结果已经分别记录在 Phase 5/5B 文档；本页继续只承担历史问题证据。

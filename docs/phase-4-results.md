@@ -99,10 +99,10 @@ Evaluation 达到预设 FPIR 目标，但 TPIR 比 Calibration 下降 13.04 个�
 
 - `Mean Prototype + 仅候选分差` 是自然 LFW 大 Gallery 严格工作点下的历史候选，已经被 Phase 5B 的跨质量联合标定取代。
 - `score_gap=0.5078` 对 Gallery 候选身份数量和人员组成敏感；最终只有少量身份的 Demo Gallery 不能直接声称拥有相同 FPIR/TPIR。
-- Phase 3 已否定启发式 `quality_score` 的硬拒绝、加权和质量分层阈值用途；当前桌面应用尚未删除这套旧部署策略，待 Phase 5B 运行时接入时一次性替换。
+- Phase 3 已否定启发式质量总分的硬拒绝、加权和质量分层阈值用途；当前桌面应用已经删除这套旧部署策略并接入 Phase 5B 最终规则。
 - XQLFW 没有参与本轮历史选择，但已在 Phase 5B 与 LFW 同路径构成四个联合选参场景；QMUL-SurvFace 仍只作监控小脸压力测试。
 
-## 复现命令
+## 当前可复核入口
 
 ```bash
 .venv/bin/python scripts/extract_lfw_raw_embeddings.py --data-dir ./data
@@ -110,13 +110,8 @@ Evaluation 达到预设 FPIR 目标，但 TPIR 比 Calibration 下降 13.04 个�
   --data-dir ./data \
   --cache-path ./data/logs/cache/lfw_raw.sqlite \
   --output-dir ./data/experiments/phase4
-.venv/bin/python scripts/calibrate_thresholds.py \
-  --scores ./data/experiments/phase4/decision_scores.sqlite \
-  --output ./data/experiments/phase4/calibration_report.json
-.venv/bin/python scripts/evaluate_selected_operating_point.py \
-  --scores ./data/experiments/phase4/decision_scores.sqlite \
-  --target-fpir 0.003 \
-  --output ./data/experiments/phase4/final_evaluation.json
 ```
 
-图片、embedding、SQLite、JSON 和 manifest 均不进入 Git；本文提交实验协议、关键数字、结论和局限性。
+自然 LFW 的历史双入口扫描器已被 Phase 5B 四类明确规则联合标定器替代；最终参数应使用
+`scripts/calibrate_cross_quality.py` 和 `scripts/evaluate_cross_quality_policy.py` 复核。图片、
+embedding、SQLite、JSON 和 manifest 均不进入 Git；本文提交实验协议、关键数字、结论和局限性。

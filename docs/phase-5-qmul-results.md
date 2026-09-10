@@ -73,8 +73,8 @@ Phase 4 的 LFW 主工作点为：
 
 ```text
 Mean Prototype
-match_threshold = -1.0
-min_score_gap = 0.50780195
+最高分条件：关闭（旧扫描器使用哨兵值表示）
+候选分差下限：0.50780195
 ```
 
 该工作点机械应用到 QMUL 的 268 张可评分 Probe 后，Known 接受、Known 错误接受和
@@ -112,11 +112,7 @@ Gallery 的工作点复核和完整应用 E2E 耗时。
   --data-dir ./data \
   --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
 
-.venv/bin/python scripts/evaluate_qmul.py \
-  --data-dir ./data \
-  --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace \
-  --cache-path ./data/logs/cache/qmul_survface_raw.sqlite \
-  --transfer-policy ./data/experiments/phase4/final_evaluation.json
 ```
 
-第二条命令只读取缓存、协议和 Phase 4 工作点，不导入或初始化 `FaceEngine`。
+历史无阈值候选分数和压力报告已经冻结在上述 `data/experiments/phase5/` 产物中。机械迁移
+Phase 4 桌面外工作点的评测器已移除，避免把极小有效分母和全拒绝误当成可部署结论。

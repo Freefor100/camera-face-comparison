@@ -1,167 +1,87 @@
-# Phase 3～4 质量实验与联合标定实施计划
+# Phase 3～4 质量实验与自然域标定执行记录
 
-> **执行方式：** 当前任务使用测试驱动逐项实施；每个里程碑形成独立提交。实验数据、缓存和报告保存在 `data/`，不进入 Git。
+> 本文是已经完成的历史阶段记录，不是当前 TODO。一次性质量分层与旧扫描器在结论冻结后
+> 已删除；完整数字见 `phase-3-results.md`、`phase-4-results.md`，最终跨质量选择见
+> `phase-5b-cross-quality-results.md`。
 
-**目标：** 先用 Calibration 身份验证数值质量门和入库拒绝规则，再用冻结后的有效数据联合选择人员聚合方法、匹配阈值及候选分差。
+## 1. 当时要解决的问题
 
-**架构：** 把人脸模型产生的 embedding/原始质量测量、质量规则和开放集判定规则拆成三层。Phase 3 只使用 Calibration 身份和可恢复实验缓存；Phase 4 的精确扫描器可以提前实现，但最终选择只允许在质量规则冻结后运行，并只在独立 Evaluation 上验证一次。
+Phase 2 暴露了两个依赖问题：一是启发式质量预筛拒绝了大量图片，使有效分母被人为
+缩小；二是固定一个初始阈值比较不同聚合方法并不公平。执行顺序因此固定为：
 
-**技术栈：** Python 3.11+、InsightFace、ONNX Runtime CUDA/CPU、OpenCV、NumPy、SQLite、pytest。
+```text
+原始质量测量与判定分离
+  → 只用 Calibration 做单因素质量实验
+  → 否定或冻结质量规则
+  → 重建无质量预筛的自然 LFW embedding
+  → 保存不含接收参数的连续分数
+  → 联合比较聚合与开放集规则
+  → 参数冻结后只读一次 Evaluation
+```
 
-**依据：** `README.md` 的 Phase 3～4 路线图、`docs/phase-2-design.md`、`docs/phase-2-results.md` 和 `docs/技术调研-开放集识别规则与质量评估.md`。
+## 2. Phase 3 质量实验
 
-## 全局约束
+### 数据隔离
 
-- 不读取 Evaluation 来选择质量门、聚合方法或识别参数。
-- LFW Calibration 中使用全部 116 个具有有效 Probe 的 Known 身份；Unknown 从 397 个有效来源身份中按种子 `2026` 固定选择 300 个。
-- 质量实验只做单因素退化，不做全因素笛卡尔积。
-- `quality_score` 先作为观测量，不参与人员聚合或样本加权。
-- Phase 3 不用未冻结的匹配阈值报告最终 FPIR；只保存 Unknown 最高候选分数分布，FPIR 在 Phase 4 工作点上计算。
-- 代码不兼容旧缓存、旧配置和旧接口；实验数据结构变化时重建 `data/experiments/phase3/`。
-- 解释性注释和 docstring 使用中文。
+- 只使用 LFW Calibration 身份，不读取 Evaluation；
+- Known 116 个身份，每人一张干净参考图和一张 Probe；
+- Unknown 300 个来源身份，每个身份最多一张 Probe；
+- 固定种子 `2026`，协议图片和身份均保存到本地 JSON。
 
----
+### 单因素条件
 
-### Task 1：拆分原始质量测量与质量规则
+- 人脸目标尺寸：160、112、96、80、64、48 px；
+- 高斯模糊：σ=0、1、2、3、4；
+- 亮度倍率：1.0、0.75、0.50、0.35、1.25、1.50；
+- 对比度倍率：1.0、0.75、0.50、0.25。
 
-**Files:**
-- Modify: `src/camera_face_comparison/image_input.py`
-- Modify: `src/camera_face_comparison/evaluation_cache.py`
-- Modify: `tests/test_quality.py`
-- Modify: `tests/test_evaluation_cache.py`
+每次只改变一个因素，不做全部条件的笛卡尔组合。分别退化 Probe 和 Gallery，记录 FTE、
+原始指标、同人相似度、Rank-1、Unknown 最高分和模型耗时。共完成 10,108 条正式测量，
+全部使用实际 CUDA provider。
 
-**Interfaces:**
-- Produces: `measure_quality(frame, observation) -> dict[str, float]`
-- Produces: `apply_quality_policy(metrics, settings) -> QualityProfile`
-- Keeps: `assess_quality(frame, observation, settings) -> QualityProfile` as the composition used by the application.
-- Produces: `quality_policy_id(settings) -> str` independent of `embedding_extraction_id(settings)`.
+### 决策
 
-- [x] 写失败测试，证明相同图片测量值不随质量阈值变化，并证明质量策略可以对同一测量值给出不同接收结果。
-- [x] 运行 `pytest tests/test_quality.py tests/test_evaluation_cache.py -v`，确认因新接口不存在而失败。
-- [x] 实现测量/策略拆分，使 `assess_quality()` 保持现有应用行为。
-- [x] 从 `embedding_extraction_id` 删除质量阈值，新增独立 `quality_policy_id`。
-- [x] 运行受影响测试并提交：`refactor: separate face quality measurement from policy`。
+旧质量总分和硬门未能稳定预测识别错误。为了移除 2 个 Probe 错误，99% 干净样本保留
+点额外拒绝 1,053 个正确输入。因此最终删除质量总分、等级、硬门和样本质量加权；五项
+原始指标只作为实验记录和非阻断 UI 提示。
 
-### Task 2：固定 Phase 3 实验协议
+## 3. Phase 4 自然 LFW 原始链路
 
-**Files:**
-- Create: `src/camera_face_comparison/quality_experiment.py`
-- Create: `scripts/prepare_quality_experiment.py`
-- Create: `tests/test_quality_experiment.py`
+质量结论改变了有效输入定义，因此没有复用被预筛污染的 Phase 2 结果。重新建立的
+`RawEmbeddingCache` 只由数据集、模型提取版本、相对路径和文件 SHA-256 决定：
 
-**Interfaces:**
-- Produces: `QualityExperimentProtocol`，保存 Known Probe、Unknown Probe、每个 Known 身份的参考图候选和随机种子。
-- Produces: `build_quality_experiment_protocol(split_protocol, decision_scores_path, unknown_count=300, seed=2026)`。
-- Produces: `write_quality_experiment_protocol()` / `read_quality_experiment_protocol()`。
+- 13,233 张图片中 13,185 张得到 embedding，48 张 FTE；
+- Gallery 7,465 张有效，Probe 5,720 张有效；
+- 六种聚合共保存 34,320 条连续第一/第二候选分数；
+- 缓存复读 13,233 次全部命中，模型推理 0 次。
 
-- [x] 写失败测试，使用小型协议和分数库验证只读取 Calibration、Known/Unknown 身份不重叠、固定种子可复现。
-- [x] 运行 `pytest tests/test_quality_experiment.py -v`，确认因模块不存在而失败。
-- [x] 实现协议构建，Known 每个身份固定选择一张已通过 Phase 2 的 Probe；Unknown 每个来源身份最多选择一张。
-- [x] CLI 生成 `data/experiments/phase3/protocol.json` 并记录源协议哈希。
-- [x] 运行针对性测试和真实协议生成命令，核对 Known=116、Unknown=300。
-- [x] 提交：`feat: add fixed quality experiment protocol`。
+有身份标签的数据集图片若检测到背景次要人脸，选择面积最大的主体脸；桌面应用仍拒绝
+多人脸。判定参数不写入原始 embedding 缓存和无阈值分数库。
 
-### Task 3：实现单因素退化和可恢复原始测量缓存
+## 4. 历史自然域扫描与发现
 
-**Files:**
-- Create: `src/camera_face_comparison/quality_degradation.py`
-- Create: `src/camera_face_comparison/quality_experiment_store.py`
-- Create: `src/camera_face_comparison/quality_experiment_runner.py`
-- Create: `scripts/run_quality_experiment.py`
-- Modify: `tests/test_quality_experiment.py`
+当时比较 Single、Max、Mean Prototype、Top-K Mean K=2/3/5，并扫描最高分阈值和
+候选分差。候选取实际分数断点，不使用反向传播或任意固定网格。
 
-**Interfaces:**
-- Produces: `DegradationSpec(kind, level)`。
-- Produces: `apply_degradation(frame, spec, baseline_bbox) -> np.ndarray`。
-- Produces: `select_primary_face(faces) -> FaceObservation`，仅用于已知单主体数据集，按人脸面积、中心距离和检测分数确定主脸。
-- Produces: `QualityExperimentStore`，以图片路径、文件 SHA-256、退化条件和 `embedding_extraction_id` 为键保存 embedding、原始指标、检测数量、耗时或 FTE 原因。
+自然 LFW 在严格 `FPIR≤0.3%` 下产生 Mean Prototype + 仅候选分差的历史候选：
+Calibration `FPIR=0.244%`、`TPIR=61.49%`，Evaluation `FPIR=0.252%`、
+`TPIR=48.45%`。这暴露出两个问题：
 
-- [x] 写失败测试，分别验证高斯模糊、亮度、对比度和固定画布人脸尺寸退化只改变指定因素。
-- [x] 写失败测试，验证缓存重开后不重复调用 fake engine，图片哈希或提取标识变化时失效。
-- [x] 实现退化条件：人脸目标尺寸 `160/112/96/80/64/48 px`，高斯模糊 `σ=0/1/2/3/4`，亮度倍率 `1.0/0.75/0.50/0.35/1.25/1.50`，对比度倍率 `1.0/0.75/0.50/0.25`；重复基线只运行一次。
-- [x] 实现按批提交、进度输出和中断恢复；运行时记录实际 CUDA/CPU provider。
-- [x] 运行针对性测试并提交：`feat: add recoverable face quality degradation experiment`。
+1. 旧扫描器曾用负最高分阈值表示“关闭该条件”，命名不准确；
+2. 0.3% 对课程桌面演示过严，且自然 LFW 不能回答跨质量 Gallery/Probe。
 
-### Task 4：生成质量证据和冻结建议
+Phase 5B 因而重新实现四类明确规则，并把主目标改为 `FPIR_valid≤1%`，同时保留 0.3%
+和 10% 参考点。自然域历史结果不再作为部署参数。
 
-**Files:**
-- Create: `src/camera_face_comparison/quality_analysis.py`
-- Create: `scripts/analyze_quality_experiment.py`
-- Create: `tests/test_quality_analysis.py`
-- Create: `docs/phase-3-results.md`
-- Modify: `README.md`
-- Modify: `docs/known-issues.md`
+## 5. 最终交接状态
 
-**Interfaces:**
-- Produces: `analyze_probe_quality()` 和 `analyze_gallery_quality()`。
-- Produces: 每条件的 FTE、当前质量规则拒绝率、Known Rank-1、同人分数、Unknown top-score 分位点。
-- Produces: 每个原始指标和 `quality_score` 的 Error-versus-Reject 表，以及清洁输入保留率为 90%/95%/99% 的候选门。
+- [x] 原始 embedding 与接收参数彻底分离；
+- [x] 质量总分、等级、硬门和质量加权未进入部署；
+- [x] Phase 5B 完成六场景、六聚合、四规则和 NAC 联合标定；
+- [x] 最终选择 Mean Prototype + 最高分阈值 `0.5557855367660522`；
+- [x] 冻结参数后只执行一次 Evaluation；
+- [x] 桌面运行时已使用相同聚合和阈值；
+- [x] 当前配置、数据库、UI、日志、测试和文档不保留旧部署接口。
 
-- [x] 写失败测试，以手工分数验证 Rank-1、分位点和 Error-versus-Reject 计算。
-- [x] 实现分析函数和原子 JSON 报告写入。
-- [x] 在 CUDA 上运行真实实验；10,108 条正式测量全部完成，FTE=0。
-- [x] 生成 `data/experiments/phase3/report.json` 和 `docs/phase-3-results.md`，文档只写实际数字。
-- [x] 根据证据关闭 `QUAL-001`、保留并改写 `QUAL-002`；启发式质量分不进入最终硬拒绝、加权或分层识别阈值。
-- [x] 运行针对性测试、Ruff、compileall 和 diff 检查后提交：`docs: record phase 3 quality evidence`。
-
-### Task 5：实现 Phase 4 精确断点扫描器
-
-**Files:**
-- Replace: `src/camera_face_comparison/calibration.py`
-- Replace: `scripts/calibrate_thresholds.py`
-- Modify: `tests/test_calibration.py`
-- Modify: `tests/test_calibration_script.py`
-
-**Interfaces:**
-- Produces: `calibrate_method(rows, target_fpir, use_score_gap) -> OperatingPoint`。
-- Produces: `compare_methods(decision_scores_path, split='calibration') -> CalibrationReport`。
-- Produces: `evaluate_operating_point(decision_scores_path, selected, split='evaluation') -> EvaluationReport`。
-
-- [x] 写失败测试，验证仅阈值扫描、阈值加候选分差扫描和无方案达到目标 FPIR。
-- [x] 使用实际 `top_score` 和 `score_gap` 离散断点；二维规则通过反向累计计数扫描，不构造“候选组合 × Probe”的三维数组。
-- [x] 对六种聚合分别报告 `FPIR≤1%`、`FPIR≤0.3%`、Calibration 观测 `FPIR=0%`，同时保留仅阈值和阈值+候选分差两组。
-- [x] 禁止脚本在选择阶段查询 `split='evaluation'`；只有显式 `evaluate_operating_point()` 可以读取 Evaluation。
-- [x] 运行针对性测试并提交：`feat: add exact open-set operating-point calibration`。
-
-### Task 5.5：清除质量预筛并重建自然 LFW 原始分数
-
-Phase 3 证明现有质量门严重过严后新增此依赖，不能继续让 Phase 2 的 1,901 个 Probe 拒绝污染最终标定。
-
-- [x] 新增只按数据集、提取版本、图片路径和 SHA-256 建键的 `RawEmbeddingCache`；保存 embedding、原始测量或 FTE，不保存质量判定。
-- [x] 有身份标签的数据集按面积选择主体脸，不沿用桌面应用的多人脸拒绝。
-- [x] cache-only 分数导出删除 `probe_quality_tier` 和 `probe_quality_score`，只保留原始质量指标。
-- [x] 在 CUDA 上完成 13,233 张自然 LFW 原始提取，得到 13,185 张 embedding、48 张 FTE；生成 34,320 条六方法分数并复跑精确扫描。
-- [x] 缓存复读命中 13,233 张、模型推理 0 次；改变质量规则或判定参数只重算分数/判定，已关闭 `EVAL-002`。
-
-### Task 6：质量冻结后的联合标定与应用接入
-
-**Files:**
-- Modify: `src/camera_face_comparison/config.py`
-- Modify: `src/camera_face_comparison/recognition.py`
-- Modify: `src/camera_face_comparison/ui/main_window.py`
-- Modify: `tests/test_config.py`
-- Modify: `tests/test_recognition.py`
-- Modify: `tests/test_ui.py`
-- Create: `docs/phase-4-results.md`
-- Modify: `README.md`
-- Modify: `design.md`
-- Modify: `docs/known-issues.md`
-
-**Interfaces:**
-- Consumes: Phase 3 冻结的 `quality_policy_id` 和重新导出的无阈值分数。
-- Consumes: Phase 4 选出的 `aggregation_method/top_k/match_threshold/use_score_gap/min_score_gap`。
-- Produces: 应用配置和运行识别服务使用同一套冻结规则。
-
-- [x] 已按 Phase 3 结论清除质量预筛并重建自然 LFW 原始 embedding/无阈值分数，不再复用被质量门污染的 Phase 2 分数库。
-- [x] 在 Calibration 选择主工作点，在 Evaluation 只执行一次最终统计。
-- [ ] 先写失败测试，再把选定聚合与规则接入应用；删除未被选择的部署旧逻辑和质量分层阈值。
-- [x] 在 `docs/phase-4-results.md` 记录 Phase 4 实际 FPIR、FNIR、TPIR、Rank-1、模型失败和有效分母。
-- [ ] 全量运行 pytest、Ruff、compileall、`git diff --check`，提交：`feat: apply calibrated open-set recognition policy`。
-
-## 完成判定
-
-- Phase 3 协议不含任何 Evaluation Probe。
-- 真实实验报告记录实际 provider、样本数、退化条件、FTE、质量拒绝、Rank-1 和连续分数分布。
-- Phase 4 选择过程只读取 Calibration，最终报告才读取 Evaluation。
-- 应用最终配置来自实验结果，不保留无依据的初始质量分层或软质量加权。
-- 每个功能测试都有过失败阶段；真实数据实验不塞进 pytest。
+实验 SQLite、JSON、manifest 和图片位于 Git 忽略的 `data/experiments/phase3/`、
+`phase4/` 和 `phase5b/`。当前可执行入口以 README 为准。
