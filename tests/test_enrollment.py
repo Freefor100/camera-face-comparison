@@ -106,6 +106,13 @@ def test_one_valid_camera_input_creates_a_person(tmp_path) -> None:
     assert all(sample.source_type == "camera" for sample in samples)
     assert all(sample.image_sha256 for sample in samples)
     assert all((settings.data_dir / sample.image_path).is_file() for sample in samples)
+    assert set(samples[0].quality_metrics) == {
+        "detection_score",
+        "face_size_px",
+        "blur_variance",
+        "brightness",
+        "contrast",
+    }
     repository.close()
 
 

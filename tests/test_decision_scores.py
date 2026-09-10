@@ -2,44 +2,26 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import replace
 
 import numpy as np
 
-from camera_face_comparison.config import load_settings
 from camera_face_comparison.decision_scores import (
     export_lfw_decision_scores,
     summarize_decision_scores,
 )
-from camera_face_comparison.evaluation_cache import (
-    decision_policy_id,
+from camera_face_comparison.experiment_artifacts import (
     embedding_extraction_id,
     file_sha256,
-    quality_policy_id,
 )
 from camera_face_comparison.lfw_dataset import LfwSplitProbe, LfwSplitProtocol
 from camera_face_comparison.raw_embedding_cache import RawEmbeddingCache
 
 
-def test_embedding_id_ignores_quality_and_decision_parameters(tmp_path) -> None:
-    """质量门和判定参数变化都不能伪装成模型重新提取。"""
+def test_embedding_id_only_depends_on_model_identity() -> None:
+    """特征提取标识只能随模型变化，不能包含后续判定参数。"""
 
-    settings = load_settings(tmp_path / "data")
-    changed_decision = replace(
-        settings,
-        match_threshold=0.72,
-        min_score_gap=0.14,
-        top_k=5,
-    )
-    changed_quality = replace(settings, min_face_size_px=80)
-
-    assert embedding_extraction_id(settings) == embedding_extraction_id(changed_decision)
-    assert embedding_extraction_id(settings) == embedding_extraction_id(changed_quality)
-    assert quality_policy_id(settings) != quality_policy_id(changed_quality)
-    assert decision_policy_id(settings) != decision_policy_id(changed_decision)
-    assert decision_policy_id(settings, aggregation_method="max") != decision_policy_id(
-        settings, aggregation_method="mean_prototype"
-    )
+    assert embedding_extraction_id() == embedding_extraction_id("buffalo_l")
+    assert embedding_extraction_id("buffalo_l") != embedding_extraction_id("antelopev2")
 
 
 def test_cache_only_export_saves_six_threshold_free_scores_and_rejections(tmp_path) -> None:
@@ -138,10 +120,10 @@ def test_cache_only_export_saves_six_threshold_free_scores_and_rejections(tmp_pa
     methods = {(row[0], row[1]) for row in rows}
     connection.close()
 
-    assert "match_threshold" not in columns
-    assert "min_score_gap" not in columns
+    assert "minimum_score" not in columns
+    assert "minimum_gap" not in columns
     assert "probe_quality_tier" not in columns
-    assert "probe_quality_score" not in columns
+    assert "probe_quality_summary" not in columns
     assert "embedding_extraction_id" in run_columns
     assert methods == {
         ("single", 0),
@@ -166,5 +148,5 @@ def test_cache_only_export_saves_six_threshold_free_scores_and_rejections(tmp_pa
     assert evaluation["valid_probe_total"] == 1
     assert evaluation["unknown_probe_total"] == 1
     assert len(calibration["aggregation_variants"]) == 6
-    assert "match_threshold" not in json.dumps(calibration)
-    assert "min_score_gap" not in json.dumps(calibration)
+    assert "minimum_score" not in json.dumps(calibration)
+    assert "minimum_gap" not in json.dumps(calibration)

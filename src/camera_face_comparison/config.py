@@ -3,43 +3,40 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+from .open_set_policy import ScoreThresholdPolicy
 
 DEFAULT_CONFIG = """[recognition]
-match_threshold = 0.45
-min_score_gap = 0.05
-top_k = 3
+aggregation_method = "mean_prototype"
+rule = "score_threshold"
+minimum_score = 0.5557855367660522
 
-[recognition.quality_tiers.high]
-match_threshold = 0.50
-min_score_gap = 0.05
-
-[recognition.quality_tiers.medium]
-match_threshold = 0.60
-min_score_gap = 0.08
-
-[quality]
-min_detection_score = 0.70
-min_face_size_px = 112
-min_blur_variance = 80.0
-min_brightness = 35.0
-max_brightness = 220.0
-min_contrast = 12.0
-high_quality_score = 0.75
-medium_quality_score = 0.55
+[quality_warnings]
+low_detection_score = 0.70
+small_face_size_px = 112
+low_blur_variance = 80.0
+low_brightness = 35.0
+high_brightness = 220.0
+low_contrast = 12.0
 """
 
 
 @dataclass(frozen=True)
-class QualityTierPolicy:
-    """一个已通过质量检查的探针质量层级的开放集接收策略。"""
+class QualityWarningThresholds:
+    """把原始图像指标转换为非阻断操作提示的参考界限。"""
 
-    match_threshold: float
-    min_score_gap: float
+    low_detection_score: float
+    small_face_size_px: int
+    low_blur_variance: float
+    low_brightness: float
+    high_brightness: float
+    low_contrast: float
 
 
 @dataclass(frozen=True)
 class Settings:
-    """运行目录、质量规则和已标定识别参数。"""
+    """运行目录、冻结识别策略和非阻断质量提示配置。"""
 
     data_dir: Path
     config_path: Path
@@ -47,29 +44,20 @@ class Settings:
     faces_dir: Path
     models_dir: Path
     logs_dir: Path
-    match_threshold: float
-    min_score_gap: float
-    top_k: int
-    quality_tiers: dict[str, QualityTierPolicy]
-    min_detection_score: float
-    min_face_size_px: int
-    min_blur_variance: float
-    min_brightness: float
-    max_brightness: float
-    min_contrast: float
-    high_quality_score: float
-    medium_quality_score: float
+    aggregation_method: Literal["mean_prototype"]
+    recognition_policy: ScoreThresholdPolicy
+    quality_warnings: QualityWarningThresholds
 
 
 def load_settings(data_dir: Path) -> Settings:
-    """创建可迁移运行目录并读取当前 TOML 配置。
+    """创建运行目录并严格读取当前配置格式。
 
     参数：
         data_dir：保存数据库、图片、模型和日志的目录。
     返回：
-        供应用各模块共享的不可变配置对象。
+        当前运行目录、Mean Prototype 聚合、开放集策略和提示界限。
     前置条件：
-        配置文件不存在时会生成当前版本的完整默认配置；已有配置必须包含当前字段。
+        已有配置必须只包含当前字段；本项目不解析旧质量层级或双阈值配置。
     """
 
     resolved_data_dir = data_dir.expanduser().resolve()
@@ -82,16 +70,37 @@ def load_settings(data_dir: Path) -> Settings:
     config_path = resolved_data_dir / "config.toml"
     if not config_path.exists():
         config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
-
     with config_path.open("rb") as config_file:
         config = tomllib.load(config_file)
-    recognition = config["recognition"]
-    quality = config["quality"]
-    tier_config = recognition["quality_tiers"]
-    quality_tiers = {
-        "high": _read_tier(tier_config["high"]),
-        "medium": _read_tier(tier_config["medium"]),
-    }
+
+    _require_exact_keys(config, {"recognition", "quality_warnings"}, "root")
+    recognition = _required_table(config, "recognition")
+    warning_values = _required_table(config, "quality_warnings")
+    aggregation_method = recognition.get("aggregation_method")
+    if aggregation_method != "mean_prototype":
+        raise ValueError("recognition.aggregation_method must be mean_prototype")
+    policy = _read_recognition_policy(recognition)
+    _require_exact_keys(
+        warning_values,
+        {
+            "low_detection_score",
+            "small_face_size_px",
+            "low_blur_variance",
+            "low_brightness",
+            "high_brightness",
+            "low_contrast",
+        },
+        "quality_warnings",
+    )
+    warnings = QualityWarningThresholds(
+        low_detection_score=float(warning_values["low_detection_score"]),
+        small_face_size_px=int(warning_values["small_face_size_px"]),
+        low_blur_variance=float(warning_values["low_blur_variance"]),
+        low_brightness=float(warning_values["low_brightness"]),
+        high_brightness=float(warning_values["high_brightness"]),
+        low_contrast=float(warning_values["low_contrast"]),
+    )
+    _validate_warning_thresholds(warnings)
     return Settings(
         data_dir=resolved_data_dir,
         config_path=config_path,
@@ -99,132 +108,59 @@ def load_settings(data_dir: Path) -> Settings:
         faces_dir=faces_dir,
         models_dir=models_dir,
         logs_dir=logs_dir,
-        match_threshold=float(recognition["match_threshold"]),
-        min_score_gap=float(recognition["min_score_gap"]),
-        top_k=int(recognition["top_k"]),
-        quality_tiers=quality_tiers,
-        min_detection_score=float(quality["min_detection_score"]),
-        min_face_size_px=int(quality["min_face_size_px"]),
-        min_blur_variance=float(quality["min_blur_variance"]),
-        min_brightness=float(quality["min_brightness"]),
-        max_brightness=float(quality["max_brightness"]),
-        min_contrast=float(quality["min_contrast"]),
-        high_quality_score=float(quality["high_quality_score"]),
-        medium_quality_score=float(quality["medium_quality_score"]),
+        aggregation_method="mean_prototype",
+        recognition_policy=policy,
+        quality_warnings=warnings,
     )
 
 
-def write_recognition_thresholds(
-    settings: Settings,
-    *,
-    match_threshold: float,
-    min_score_gap: float,
+def _read_recognition_policy(values: dict[str, object]) -> ScoreThresholdPolicy:
+    """读取已由联合标定冻结的最高分阈值规则。"""
+
+    rule = values.get("rule")
+    if rule != "score_threshold":
+        raise ValueError("recognition.rule must be score_threshold")
+    _require_exact_keys(
+        values,
+        {"aggregation_method", "rule", "minimum_score"},
+        "recognition",
+    )
+    return ScoreThresholdPolicy(minimum_score=float(values["minimum_score"]))
+
+
+def _required_table(config: dict[str, object], name: str) -> dict[str, object]:
+    """读取必需 TOML 表，并在类型错误时给出明确位置。"""
+
+    value = config[name]
+    if not isinstance(value, dict):
+        raise TypeError(f"{name} must be a TOML table")
+    return value
+
+
+def _require_exact_keys(
+    values: dict[str, object],
+    expected: set[str],
+    location: str,
 ) -> None:
-    """保存整体识别阈值，同时保留当前两个质量层级的策略。
+    """要求配置节点字段与当前格式完全一致。"""
 
-    参数：
-        settings：当前运行配置。
-        match_threshold：最高候选得分阈值。
-        min_score_gap：第一、第二候选的最小分差。
-    前置条件：
-        两个阈值都必须位于 `[0, 1]`。
-    """
-
-    _validate_thresholds(match_threshold, min_score_gap)
-    _write_settings_file(
-        settings,
-        match_threshold=match_threshold,
-        min_score_gap=min_score_gap,
-        quality_tiers=settings.quality_tiers,
-    )
+    actual = set(values)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        raise ValueError(
+            f"invalid {location} fields; missing={missing}, unexpected={unexpected}"
+        )
 
 
-def write_quality_tier_thresholds(
-    settings: Settings,
-    *,
-    tier: str,
-    match_threshold: float,
-    min_score_gap: float,
-) -> None:
-    """保存一个探针质量层级的标定结果，不改变另一个层级的策略。
+def _validate_warning_thresholds(values: QualityWarningThresholds) -> None:
+    """检查非阻断提示界限是否处于可解释范围。"""
 
-    参数：
-        settings：当前运行配置。
-        tier：要更新的质量层级，目前为 `high` 或 `medium`。
-        match_threshold：该层级的最高候选得分阈值。
-        min_score_gap：该层级的最小候选分差。
-    前置条件：
-        层级必须存在，且两个阈值都必须位于 `[0, 1]`。
-    """
-
-    if tier not in settings.quality_tiers:
-        raise ValueError(f"unknown quality tier: {tier}")
-    _validate_thresholds(match_threshold, min_score_gap)
-    quality_tiers = {
-        **settings.quality_tiers,
-        tier: QualityTierPolicy(match_threshold=match_threshold, min_score_gap=min_score_gap),
-    }
-    _write_settings_file(
-        settings,
-        match_threshold=settings.match_threshold,
-        min_score_gap=settings.min_score_gap,
-        quality_tiers=quality_tiers,
-    )
-
-
-def _write_settings_file(
-    settings: Settings,
-    *,
-    match_threshold: float,
-    min_score_gap: float,
-    quality_tiers: dict[str, QualityTierPolicy],
-) -> None:
-    """按当前完整字段重写配置文件，不保留旧配置字段。"""
-    high_tier = quality_tiers["high"]
-    medium_tier = quality_tiers["medium"]
-    settings.config_path.write_text(
-        "\n".join(
-            (
-                "[recognition]",
-                f"match_threshold = {match_threshold:.6f}",
-                f"min_score_gap = {min_score_gap:.6f}",
-                f"top_k = {settings.top_k}",
-                "",
-                "[recognition.quality_tiers.high]",
-                f"match_threshold = {high_tier.match_threshold:.6f}",
-                f"min_score_gap = {high_tier.min_score_gap:.6f}",
-                "",
-                "[recognition.quality_tiers.medium]",
-                f"match_threshold = {medium_tier.match_threshold:.6f}",
-                f"min_score_gap = {medium_tier.min_score_gap:.6f}",
-                "",
-                "[quality]",
-                f"min_detection_score = {settings.min_detection_score:.6f}",
-                f"min_face_size_px = {settings.min_face_size_px}",
-                f"min_blur_variance = {settings.min_blur_variance:.6f}",
-                f"min_brightness = {settings.min_brightness:.6f}",
-                f"max_brightness = {settings.max_brightness:.6f}",
-                f"min_contrast = {settings.min_contrast:.6f}",
-                f"high_quality_score = {settings.high_quality_score:.6f}",
-                f"medium_quality_score = {settings.medium_quality_score:.6f}",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-
-def _validate_thresholds(match_threshold: float, min_score_gap: float) -> None:
-    """检查识别阈值是否位于合法的闭区间 `[0, 1]`。"""
-    if not 0.0 <= match_threshold <= 1.0:
-        raise ValueError("match_threshold must be between 0 and 1")
-    if not 0.0 <= min_score_gap <= 1.0:
-        raise ValueError("min_score_gap must be between 0 and 1")
-
-
-def _read_tier(raw_tier: dict[str, object]) -> QualityTierPolicy:
-    """把 TOML 中的一个质量层级配置转换为类型化策略对象。"""
-    return QualityTierPolicy(
-        match_threshold=float(raw_tier["match_threshold"]),
-        min_score_gap=float(raw_tier["min_score_gap"]),
-    )
+    if not 0.0 <= values.low_detection_score <= 1.0:
+        raise ValueError("quality_warnings.low_detection_score must be between 0 and 1")
+    if values.small_face_size_px < 1:
+        raise ValueError("quality_warnings.small_face_size_px must be positive")
+    if min(values.low_blur_variance, values.low_brightness, values.low_contrast) < 0.0:
+        raise ValueError("quality warning lower bounds must not be negative")
+    if values.high_brightness <= values.low_brightness:
+        raise ValueError("high_brightness must exceed low_brightness")

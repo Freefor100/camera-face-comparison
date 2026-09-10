@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from camera_face_comparison.config import load_settings
-from camera_face_comparison.evaluation_cache import embedding_extraction_id, write_json_atomic
+from camera_face_comparison.experiment_artifacts import embedding_extraction_id, write_json_atomic
 from camera_face_comparison.face_engine import FaceEngine
 from camera_face_comparison.qmul_survface import build_qmul_protocol
 from camera_face_comparison.raw_dataset_extraction import (
@@ -49,7 +49,7 @@ def main() -> int:
     try:
         protocol = build_qmul_protocol(args.dataset_root)
         engine = FaceEngine.from_local_model(settings)
-        extraction_id = embedding_extraction_id(settings)
+        extraction_id = embedding_extraction_id()
         gallery_total = sum(len(paths) for paths in protocol.enrollment.values())
         known_probe_total = sum(
             probe.expected_person_id is not None for probe in protocol.probes

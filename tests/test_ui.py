@@ -61,8 +61,7 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
             SampleInput(
                 image_path="faces/alice/sample.jpg",
                 embedding=np.array([1.0, 0.0], dtype=np.float32),
-                pose="sample_001",
-                quality={"quality_score": 0.9, "tier": "high"},
+                quality_metrics={"face_size_px": 160.0},
             )
         ],
     )
@@ -136,9 +135,14 @@ def test_recognition_result_shows_score_gap(tmp_path, qapplication) -> None:
             display_name="Alice",
             top_score=0.72,
             second_score=0.61,
+            score_gap=0.11,
+            acceptance_score=0.72,
+            acceptance_rule="score_threshold",
             latency_ms=18.0,
             reason=None,
             bbox=None,
+            quality_metrics={},
+            quality_warnings=(),
         )
     )
 

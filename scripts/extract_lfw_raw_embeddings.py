@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from camera_face_comparison.config import load_settings
-from camera_face_comparison.evaluation_cache import (
+from camera_face_comparison.experiment_artifacts import (
     embedding_extraction_id,
     file_sha256,
     write_json_atomic,
@@ -54,7 +54,7 @@ def main() -> int:
     try:
         protocol = read_lfw_protocol(protocol_path)
         engine = FaceEngine.from_local_model(settings)
-        extraction_id = embedding_extraction_id(settings)
+        extraction_id = embedding_extraction_id()
         base_manifest = {
             "artifact": "lfw-policy-independent-raw-embeddings-v1",
             "status": "running",

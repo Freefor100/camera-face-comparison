@@ -15,7 +15,7 @@ from camera_face_comparison.cross_quality_experiment import (
     load_joint_score_rows,
 )
 from camera_face_comparison.decision_scores import METHOD_VARIANTS
-from camera_face_comparison.evaluation_cache import file_sha256, write_json_atomic
+from camera_face_comparison.experiment_artifacts import file_sha256, write_json_atomic
 from camera_face_comparison.joint_calibration import (
     JointOperatingPoint,
     calibrate_joint_rule,

@@ -23,13 +23,13 @@ def run_application(data_dir: Path) -> int:
     """
 
     application = QApplication.instance() or QApplication(sys.argv)
-    settings = load_settings(data_dir)
     try:
+        settings = load_settings(data_dir)
         face_engine = FaceEngine.from_local_model(settings)
         camera = CameraService()
-    except RuntimeError as error:
+        window = MainWindow(settings=settings, face_engine=face_engine, camera=camera)
+    except (KeyError, TypeError, ValueError, RuntimeError) as error:
         QMessageBox.critical(application.activeWindow(), "启动失败", str(error))
         return 1
-    window = MainWindow(settings=settings, face_engine=face_engine, camera=camera)
     window.show()
     return application.exec()

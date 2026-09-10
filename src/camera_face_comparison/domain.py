@@ -5,6 +5,8 @@ from datetime import datetime
 
 import numpy as np
 
+from .open_set_policy import AcceptanceRule
+
 
 @dataclass(frozen=True)
 class Person:
@@ -23,8 +25,7 @@ class FaceSample:
     person_id: str
     image_path: str
     embedding: np.ndarray
-    pose: str
-    quality: dict[str, float | str]
+    quality_metrics: dict[str, float]
     created_at: datetime
     source_type: str = "camera"
     image_sha256: str | None = None
@@ -40,6 +41,11 @@ class RecognitionResult:
     display_name: str | None
     top_score: float | None
     second_score: float | None
+    score_gap: float | None
+    acceptance_score: float | None
+    acceptance_rule: AcceptanceRule
     latency_ms: float
     reason: str | None
     bbox: tuple[float, float, float, float] | None
+    quality_metrics: dict[str, float]
+    quality_warnings: tuple[str, ...]

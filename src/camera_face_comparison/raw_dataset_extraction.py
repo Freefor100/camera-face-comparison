@@ -8,11 +8,10 @@ from typing import Protocol
 
 import numpy as np
 
-from .evaluation_cache import file_sha256
-from .face_engine import FaceInputError, FaceObservation
+from .experiment_artifacts import file_sha256
+from .face_engine import FaceInputError, FaceObservation, normalize_embedding
 from .image_input import ImageInput, measure_quality
 from .lfw_dataset import LfwProtocol
-from .quality_degradation import select_primary_face
 from .raw_embedding_cache import RawEmbeddingCache, RawEmbeddingEntry
 
 
@@ -56,7 +55,7 @@ def extract_or_load_raw_embedding(
     faces = face_engine.extract_faces(image_input.frame)
     latency_ms = (perf_counter() - started_at) * 1000
     try:
-        primary = select_primary_face(faces)
+        primary = _select_primary_face(faces)
     except FaceInputError as error:
         cache.put_failed(
             relative_path=relative_path,
@@ -156,4 +155,27 @@ def extract_identification_protocol_raw_embeddings(
         cache=cache,
         commit_every=commit_every,
         on_progress=on_progress,
+    )
+
+
+def _select_primary_face(faces: Sequence[FaceObservation]) -> FaceObservation:
+    """从有标签数据集图片中选择面积最大的主体脸并归一化特征。"""
+
+    if not faces:
+        raise FaceInputError("no_face_detected")
+    selected = max(
+        faces,
+        key=lambda face: (
+            max(0.0, face.bbox[2] - face.bbox[0])
+            * max(0.0, face.bbox[3] - face.bbox[1]),
+            face.detection_score,
+            tuple(-value for value in face.bbox),
+        ),
+    )
+    return FaceObservation(
+        bbox=selected.bbox,
+        detection_score=selected.detection_score,
+        embedding=normalize_embedding(selected.embedding),
+        blur_variance=selected.blur_variance,
+        landmarks=selected.landmarks,
     )

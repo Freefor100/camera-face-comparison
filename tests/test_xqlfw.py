@@ -3,7 +3,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from camera_face_comparison.evaluation_cache import file_sha256
+from camera_face_comparison.experiment_artifacts import file_sha256
 from camera_face_comparison.raw_embedding_cache import RawEmbeddingCache
 from camera_face_comparison.xqlfw import load_xqlfw_protocol, load_xqlfw_quality_scores
 from camera_face_comparison.xqlfw_evaluation import evaluate_xqlfw_protocol

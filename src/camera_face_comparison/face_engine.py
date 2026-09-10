@@ -12,7 +12,7 @@ from .runtime import ExecutionBackend, actual_backend_for_analyzer, detect_execu
 
 
 class FaceInputError(ValueError):
-    """摄像头帧不能安全用于录入或识别。"""
+    """图片无法产生唯一且有效的人脸特征。"""
 
 
 @dataclass(frozen=True)
@@ -31,21 +31,18 @@ class FaceEngine:
 
     def __init__(
         self,
-        settings: Settings,
         *,
         analyzer: Any,
         blur_metric: Callable[[np.ndarray], float] | None = None,
         backend: ExecutionBackend | None = None,
     ) -> None:
-        """保存模型分析器和质量度量函数。
+        """保存模型分析器和质量测量函数。
 
         参数：
-            settings：当前质量门控配置。
             analyzer：提供 `get(frame)` 方法的 InsightFace 兼容分析器。
             blur_metric：可选的清晰度计算函数，未提供时使用拉普拉斯方差。
             backend：创建分析器时使用的推理后端；直接注入分析器的测试默认按 CPU 标记。
         """
-        self._settings = settings
         self._analyzer = analyzer
         self._blur_metric = blur_metric or _laplacian_variance
         self._backend = backend or ExecutionBackend(
@@ -89,7 +86,7 @@ class FaceEngine:
         )
         analyzer.prepare(ctx_id=backend.context_id, det_size=(640, 640))
         actual_backend = actual_backend_for_analyzer(analyzer, backend)
-        return cls(settings, analyzer=analyzer, backend=actual_backend)
+        return cls(analyzer=analyzer, backend=actual_backend)
 
     @property
     def backend(self) -> ExecutionBackend:
@@ -127,9 +124,9 @@ class FaceEngine:
         return observations
 
     def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
-        """提取并返回一张通过质量门控的归一化人脸。"""
+        """要求图中恰好一张人脸，并返回归一化 embedding。"""
 
-        return validate_single_face(self.extract_faces(frame), self._settings)
+        return validate_single_face(self.extract_faces(frame))
 
 
 def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
@@ -142,36 +139,22 @@ def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     return vector / norm
 
 
-def validate_single_face(
-    faces: Sequence[FaceObservation], settings: Settings
-) -> FaceObservation:
-    """在人脸数据进入标准库前执行单人脸、尺寸、分数和清晰度检查。
+def validate_single_face(faces: Sequence[FaceObservation]) -> FaceObservation:
+    """检查人脸数量和 embedding 有效性，不使用数值质量硬门。
 
     参数：
         faces：当前图像中检测到的人脸观察对象。
-        settings：质量门控阈值。
     返回：
-        一张通过检查且特征已归一化的人脸观察对象。
+        唯一一张人脸，其特征已完成 L2 归一化。
     前置条件：
-        输入应来自同一帧图像；无人脸、多张有效人脸或低质量时抛出 `FaceInputError`。
+        输入来自同一图像；无人脸、多张脸或无效 embedding 时抛出 `FaceInputError`。
     """
 
     if not faces:
         raise FaceInputError("no_face_detected")
-    accepted_detections = [
-        face for face in faces if face.detection_score >= settings.min_detection_score
-    ]
-    if not accepted_detections:
-        raise FaceInputError("detection_score_below_minimum")
-    if len(accepted_detections) != 1:
+    if len(faces) != 1:
         raise FaceInputError("multiple_faces")
-    face = accepted_detections[0]
-    left, top, right, bottom = face.bbox
-    face_size = min(right - left, bottom - top)
-    if face_size < settings.min_face_size_px:
-        raise FaceInputError("face_size_below_minimum")
-    if face.blur_variance < settings.min_blur_variance:
-        raise FaceInputError("blur_below_minimum")
+    face = faces[0]
     normalized_embedding = normalize_embedding(face.embedding)
     return FaceObservation(
         bbox=face.bbox,

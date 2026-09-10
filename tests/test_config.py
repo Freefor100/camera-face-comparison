@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from camera_face_comparison.config import (
-    load_settings,
-    write_quality_tier_thresholds,
-    write_recognition_thresholds,
-)
+import pytest
+
+from camera_face_comparison.config import load_settings
+from camera_face_comparison.open_set_policy import ScoreThresholdPolicy
 
 
-def test_load_settings_creates_portable_data_layout(tmp_path) -> None:
-    """从空数据目录启动时必须创建全部运行所需目录。"""
+def test_load_settings_creates_portable_data_layout_and_frozen_policy(tmp_path) -> None:
+    """空数据目录必须生成完整布局和实验冻结的部署策略。"""
 
     settings = load_settings(tmp_path)
 
@@ -18,47 +17,20 @@ def test_load_settings_creates_portable_data_layout(tmp_path) -> None:
     assert settings.models_dir.is_dir()
     assert settings.logs_dir.is_dir()
     assert settings.config_path.is_file()
+    assert settings.aggregation_method == "mean_prototype"
+    assert isinstance(settings.recognition_policy, ScoreThresholdPolicy)
+    assert settings.recognition_policy.minimum_score == pytest.approx(0.5557855367660522)
 
 
-def test_write_recognition_thresholds_persists_calibration_result(tmp_path) -> None:
-    """标定结果必须在下一次应用启动后改变运行参数。"""
+def test_load_settings_rejects_incomplete_configuration(tmp_path) -> None:
+    """缺失当前必需字段的配置必须明确失败。"""
 
-    settings = load_settings(tmp_path)
-    write_recognition_thresholds(settings, match_threshold=0.61, min_score_gap=0.09)
-
-    reloaded = load_settings(tmp_path)
-
-    assert reloaded.match_threshold == 0.61
-    assert reloaded.min_score_gap == 0.09
-
-
-def test_settings_exposes_quality_tier_policy(tmp_path) -> None:
-    """开放集行为必须从可迁移配置中读取质量层级策略。"""
-
-    settings = load_settings(tmp_path)
-
-    assert set(settings.quality_tiers) == {"high", "medium"}
-    assert settings.quality_tiers["high"].match_threshold > 0
-    assert (
-        settings.quality_tiers["medium"].match_threshold
-        >= settings.quality_tiers["high"].match_threshold
+    config_path = tmp_path / "config.toml"
+    tmp_path.mkdir(exist_ok=True)
+    config_path.write_text(
+        '[recognition]\naggregation_method = "mean_prototype"\n',
+        encoding="utf-8",
     )
 
-
-def test_write_quality_tier_thresholds_keeps_the_other_probe_policy(tmp_path) -> None:
-    """中等质量标定不能静默覆盖高质量探针策略。"""
-
-    settings = load_settings(tmp_path)
-    high_before = settings.quality_tiers["high"]
-
-    write_quality_tier_thresholds(
-        settings,
-        tier="medium",
-        match_threshold=0.63,
-        min_score_gap=0.11,
-    )
-
-    reloaded = load_settings(tmp_path)
-    assert reloaded.quality_tiers["high"] == high_before
-    assert reloaded.quality_tiers["medium"].match_threshold == 0.63
-    assert reloaded.quality_tiers["medium"].min_score_gap == 0.11
+    with pytest.raises((KeyError, ValueError)):
+        load_settings(tmp_path)

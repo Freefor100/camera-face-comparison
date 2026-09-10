@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .evaluation_cache import file_sha256
+from .experiment_artifacts import file_sha256
 from .raw_embedding_cache import RawEmbeddingCache
 from .xqlfw import XqlfwProtocol
 

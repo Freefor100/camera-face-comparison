@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(14)
         title = QLabel("标准人脸库")
         title.setObjectName("pageTitle")
-        subtitle = QLabel("一张合格图片即可参与识别；可继续追加不同来源和角度的样本。")
+        subtitle = QLabel("一张有效单人脸图片即可参与识别；可继续追加不同来源和角度的样本。")
         subtitle.setObjectName("pageSubtitle")
         self.people_list = QListWidget()
         self.people_list.setObjectName("peopleList")
@@ -341,18 +341,24 @@ class MainWindow(QMainWindow):
         """把服务结果转换为识别标签、耗时和检测框展示。"""
         self._last_bbox = result.bbox
         score_gap_text = _format_score_gap(result)
+        rule_text = _format_rule(result)
         if result.status == "matched":
             self.result_label.setText(
-                f"识别成功：{result.display_name}｜相似度 {result.top_score:.3f}｜{score_gap_text}"
+                f"识别成功：{result.display_name}｜相似度 {result.top_score:.3f}"
+                f"｜{score_gap_text}｜{rule_text}"
             )
         elif result.status == "unknown":
             self.result_label.setText(
                 f"未知人员｜最高相似度 {result.top_score or 0.0:.3f}｜{score_gap_text}"
-                f"｜原因：{result.reason}"
+                f"｜{rule_text}｜原因：{result.reason}"
             )
         else:
             self.result_label.setText(f"无法识别当前画面：{result.reason}")
-        self.status_label.setText(f"本次处理耗时：{result.latency_ms:.0f} ms")
+        warning_text = _format_quality_warnings(result.quality_warnings)
+        self.status_label.setText(
+            f"本次处理耗时：{result.latency_ms:.0f} ms"
+            + ("" if not warning_text else f"｜画面建议：{warning_text}")
+        )
         if self._display_frame is not None:
             self._render_frame(self._display_frame, self._last_bbox)
 
@@ -372,7 +378,7 @@ class MainWindow(QMainWindow):
         self.stop_camera()
 
     def add_person_from_files(self) -> None:
-        """通过文件选择器创建一个至少含一张合格样本的新人员。"""
+        """通过文件选择器创建一个至少含一张有效单人脸样本的新人员。"""
         name, accepted = QInputDialog.getText(self, "新增人员", "人员姓名：")
         if not accepted:
             return
@@ -420,7 +426,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "追加样本失败", str(error))
             return
         self.refresh_people()
-        self.status_label.setText(f"已追加 {count} 张合格图片。")
+        self.status_label.setText(f"已追加 {count} 张有效单人脸图片。")
 
     def append_sample_to_selected_person(self) -> None:
         """把当前摄像头画面追加到当前选中人员。"""
@@ -439,7 +445,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "追加样本失败", str(error))
             return
         self.refresh_people()
-        self.status_label.setText("已为选中人员追加一张合格图片。")
+        self.status_label.setText("已为选中人员追加一张有效单人脸图片。")
 
     def _enrollment_service(self) -> EnrollmentService:
         """根据当前窗口依赖创建标准库录入服务。"""
@@ -546,9 +552,35 @@ def _save_bgr_image(path: Path, frame: np.ndarray) -> None:
 
 def _format_score_gap(result: RecognitionResult) -> str:
     """将识别结果中的候选分差格式化为界面文本。"""
-    if result.top_score is None or result.second_score is None:
+    if result.score_gap is None:
         return "候选分差 --"
-    return f"候选分差 {result.top_score - result.second_score:.3f}"
+    return f"候选分差 {result.score_gap:.3f}"
+
+
+def _format_rule(result: RecognitionResult) -> str:
+    """把内部接收规则转换为界面可理解的中文名称。"""
+
+    names = {
+        "score_threshold": "判定：最高分阈值",
+        "score_gap": "判定：候选分差",
+        "score_and_gap": "判定：最高分与分差",
+        "nac": "判定：邻域感知分数",
+    }
+    return names[result.acceptance_rule]
+
+
+def _format_quality_warnings(warnings: tuple[str, ...]) -> str:
+    """把非阻断质量提示代码转换为简短操作建议。"""
+
+    messages = {
+        "low_detection_confidence": "正对镜头",
+        "move_closer": "靠近镜头",
+        "hold_still": "保持稳定",
+        "increase_lighting": "增加光线",
+        "reduce_lighting": "避免过曝",
+        "improve_contrast": "改善光照对比",
+    }
+    return "、".join(messages[item] for item in warnings)
 
 
 APP_STYLE_SHEET = """

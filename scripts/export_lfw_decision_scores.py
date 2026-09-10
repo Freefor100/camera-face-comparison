@@ -17,7 +17,7 @@ from camera_face_comparison.decision_scores import (
     export_lfw_decision_scores,
     summarize_decision_scores,
 )
-from camera_face_comparison.evaluation_cache import (
+from camera_face_comparison.experiment_artifacts import (
     embedding_extraction_id,
     file_sha256,
     write_json_atomic,
@@ -107,7 +107,7 @@ def main() -> int:
         "cache_path": str(cache_path),
         "cache_dataset_id": "lfw-natural-v1",
         "selected_cache_extraction_id": cache_extraction_id,
-        "current_embedding_extraction_id": embedding_extraction_id(settings),
+        "current_embedding_extraction_id": embedding_extraction_id(),
         "quality_policy": None,
         "primary_face_rule": "largest-detected-face",
         "aggregation_variants": [
@@ -124,7 +124,7 @@ def main() -> int:
         "coverage": asdict(summary),
         "code": _code_version(),
         "notes": [
-            "decision_scores.sqlite 不保存 match_threshold 或 min_score_gap。",
+            "decision_scores.sqlite 不保存任何接收判定参数。",
             "原始缓存不应用数值质量门，rejections 只表示模型 FTE。",
             "有身份标签的数据集选择面积最大的主体脸，不沿用桌面多人脸拒绝规则。",
         ],

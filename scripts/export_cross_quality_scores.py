@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from camera_face_comparison.cross_quality_experiment import export_cross_quality_scores
-from camera_face_comparison.evaluation_cache import file_sha256, write_json_atomic
+from camera_face_comparison.experiment_artifacts import file_sha256, write_json_atomic
 from camera_face_comparison.lfw_dataset import read_lfw_split_protocol
 from camera_face_comparison.raw_embedding_cache import (
     RawEmbeddingCache,

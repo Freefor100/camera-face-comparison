@@ -21,8 +21,7 @@ class SampleInput:
 
     image_path: str
     embedding: np.ndarray
-    pose: str
-    quality: dict[str, float | str]
+    quality_metrics: dict[str, float]
     source_type: str = "camera"
     image_sha256: str | None = None
 
@@ -84,8 +83,7 @@ class FaceRepository:
                 person_id=person.id,
                 image_path=sample.image_path,
                 embedding=sample.embedding,
-                pose=sample.pose,
-                quality=sample.quality,
+                quality_metrics=sample.quality_metrics,
                 source_type=sample.source_type,
                 image_sha256=sample.image_sha256,
             )
@@ -124,8 +122,7 @@ class FaceRepository:
                 person_id=person_id,
                 image_path=sample.image_path,
                 embedding=sample.embedding,
-                pose=sample.pose,
-                quality=sample.quality,
+                quality_metrics=sample.quality_metrics,
                 source_type=sample.source_type,
                 image_sha256=sample.image_sha256,
             )
@@ -177,7 +174,7 @@ class FaceRepository:
         """
         query = """
             SELECT id, person_id, image_path, embedding_blob, embedding_dim,
-                   pose, quality_json, created_at, source_type, image_sha256,
+                   quality_metrics_json, created_at, source_type, image_sha256,
                    embedding_sha256
             FROM face_samples
         """
@@ -196,6 +193,9 @@ class FaceRepository:
         person_id: str | None,
         top_score: float | None,
         second_score: float | None,
+        score_gap: float | None,
+        acceptance_score: float | None,
+        acceptance_rule: str,
         latency_ms: float,
         reason: str | None,
     ) -> None:
@@ -205,8 +205,9 @@ class FaceRepository:
                 """
                 INSERT INTO recognition_logs (
                     id, captured_at, decision, person_id, top_score,
-                    second_score, latency_ms, reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    second_score, score_gap, acceptance_score, acceptance_rule,
+                    latency_ms, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid4()),
@@ -215,6 +216,9 @@ class FaceRepository:
                     person_id,
                     top_score,
                     second_score,
+                    score_gap,
+                    acceptance_score,
+                    acceptance_rule,
                     latency_ms,
                     reason,
                 ),
@@ -236,8 +240,7 @@ class FaceRepository:
                     image_path TEXT NOT NULL,
                     embedding_blob BLOB NOT NULL,
                     embedding_dim INTEGER NOT NULL,
-                    pose TEXT NOT NULL,
-                    quality_json TEXT NOT NULL,
+                    quality_metrics_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     source_type TEXT NOT NULL DEFAULT 'camera',
                     image_sha256 TEXT,
@@ -250,11 +253,58 @@ class FaceRepository:
                     person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
                     top_score REAL,
                     second_score REAL,
+                    score_gap REAL,
+                    acceptance_score REAL,
+                    acceptance_rule TEXT NOT NULL,
                     latency_ms REAL NOT NULL,
                     reason TEXT
                 );
                 """
             )
+        self._validate_current_schema()
+
+    def _validate_current_schema(self) -> None:
+        """拒绝旧表结构，要求开发者直接重建本地开发数据库。"""
+
+        expected = {
+            "persons": ("id", "display_name", "created_at"),
+            "face_samples": (
+                "id",
+                "person_id",
+                "image_path",
+                "embedding_blob",
+                "embedding_dim",
+                "quality_metrics_json",
+                "created_at",
+                "source_type",
+                "image_sha256",
+                "embedding_sha256",
+            ),
+            "recognition_logs": (
+                "id",
+                "captured_at",
+                "decision",
+                "person_id",
+                "top_score",
+                "second_score",
+                "score_gap",
+                "acceptance_score",
+                "acceptance_rule",
+                "latency_ms",
+                "reason",
+            ),
+        }
+        for table, expected_columns in expected.items():
+            actual = tuple(
+                str(row["name"])
+                for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+            )
+            if actual != expected_columns:
+                self._connection.close()
+                raise RuntimeError(
+                    f"incompatible development database table {table}; "
+                    "delete face_library.sqlite and restart"
+                )
 
     @staticmethod
     def _make_sample(
@@ -262,8 +312,7 @@ class FaceRepository:
         person_id: str,
         image_path: str,
         embedding: np.ndarray,
-        pose: str,
-        quality: dict[str, float | str],
+        quality_metrics: dict[str, float],
         source_type: str,
         image_sha256: str | None,
     ) -> FaceSample:
@@ -276,8 +325,7 @@ class FaceRepository:
             person_id=person_id,
             image_path=image_path,
             embedding=vector,
-            pose=pose,
-            quality=quality,
+            quality_metrics={str(key): float(value) for key, value in quality_metrics.items()},
             created_at=_now(),
             source_type=source_type,
             image_sha256=image_sha256,
@@ -290,9 +338,9 @@ class FaceRepository:
             """
             INSERT INTO face_samples (
                 id, person_id, image_path, embedding_blob, embedding_dim,
-                pose, quality_json, created_at, source_type, image_sha256,
+                quality_metrics_json, created_at, source_type, image_sha256,
                 embedding_sha256
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sample.id,
@@ -300,8 +348,7 @@ class FaceRepository:
                 sample.image_path,
                 sample.embedding.tobytes(),
                 sample.embedding.size,
-                sample.pose,
-                json.dumps(sample.quality, ensure_ascii=False),
+                json.dumps(sample.quality_metrics, ensure_ascii=False),
                 sample.created_at.isoformat(),
                 sample.source_type,
                 sample.image_sha256,
@@ -320,8 +367,10 @@ class FaceRepository:
             person_id=row["person_id"],
             image_path=row["image_path"],
             embedding=embedding,
-            pose=row["pose"],
-            quality=json.loads(row["quality_json"]),
+            quality_metrics={
+                str(key): float(value)
+                for key, value in json.loads(row["quality_metrics_json"]).items()
+            },
             created_at=datetime.fromisoformat(row["created_at"]),
             source_type=row["source_type"],
             image_sha256=row["image_sha256"],

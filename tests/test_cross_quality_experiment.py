@@ -10,7 +10,7 @@ from camera_face_comparison.cross_quality_experiment import (
     load_joint_score_rows,
     mixed_gallery_domains,
 )
-from camera_face_comparison.evaluation_cache import file_sha256
+from camera_face_comparison.experiment_artifacts import file_sha256
 from camera_face_comparison.lfw_dataset import LfwSplitProbe, LfwSplitProtocol
 from camera_face_comparison.raw_embedding_cache import RawEmbeddingCache
 
@@ -136,7 +136,6 @@ def test_cross_quality_export_saves_rankings_without_decision_parameters(tmp_pat
     ).fetchall()
     connection.close()
 
-    assert "match_threshold" not in columns
     assert "minimum_score" not in columns
     assert "minimum_gap" not in columns
     assert all(row[0] == 2 for row in score_rows)

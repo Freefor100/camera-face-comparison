@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from .cross_quality_experiment import CROSS_QUALITY_SCENARIOS, mixed_gallery_domains
-from .evaluation_cache import file_sha256
+from .experiment_artifacts import file_sha256
 from .joint_calibration import (
     JointOperatingPoint,
     JointScoreRow,

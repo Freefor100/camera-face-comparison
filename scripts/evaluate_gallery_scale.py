@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from camera_face_comparison.evaluation_cache import file_sha256, write_json_atomic
+from camera_face_comparison.experiment_artifacts import file_sha256, write_json_atomic
 from camera_face_comparison.gallery_scale_experiment import (
     load_gallery_scale_inputs,
     run_gallery_scale_experiment,

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from .config import Settings
+from .config import QualityWarningThresholds
 
 if TYPE_CHECKING:
     from .face_engine import FaceObservation
@@ -58,36 +58,6 @@ class ImageInput:
         return cls(frame=_validated_copy(frame), source_type=source_type, safe_name=path.name)
 
 
-@dataclass(frozen=True)
-class QualityProfile:
-    """在人脸身份判定前使用的、可解释的图片质量数据。"""
-
-    tier: Literal["high", "medium", "reject"]
-    score: float
-    metrics: dict[str, float]
-    reasons: tuple[str, ...]
-
-
-def assess_quality(
-    frame: np.ndarray,
-    observation: FaceObservation,
-    settings: Settings,
-) -> QualityProfile:
-    """测量人脸质量并应用当前质量策略。
-
-    参数：
-        frame：原始 BGR 图像。
-        observation：已经通过单人脸门控的人脸观察对象。
-        settings：亮度、对比度和质量分层阈值。
-    返回：
-        包含质量分数、层级和拒绝原因的质量报告。
-    前置条件：
-        `observation.bbox` 必须对应当前图像中的有效区域。
-    """
-
-    return apply_quality_policy(measure_quality(frame, observation), settings)
-
-
 def measure_quality(
     frame: np.ndarray,
     observation: FaceObservation,
@@ -114,29 +84,33 @@ def measure_quality(
     }
 
 
-def apply_quality_policy(metrics: dict[str, float], settings: Settings) -> QualityProfile:
-    """把当前硬门和启发式分层应用到一组既有质量测量值。
+def quality_warnings(
+    metrics: dict[str, float],
+    thresholds: QualityWarningThresholds,
+) -> tuple[str, ...]:
+    """把异常质量指标转换为不会阻断录入或识别的操作提示。
 
     参数：
         metrics：`measure_quality()` 产生的五项原始指标。
-        settings：当前质量门和分层阈值。
+        thresholds：只用于生成提示的参考界限。
     返回：
-        接收层级、启发式质量分、原始指标和拒绝原因。
+        稳定的提示代码；空元组表示当前指标没有明显问题。
     """
 
-    reasons = _hard_failure_reasons(metrics, settings)
-    if reasons:
-        return QualityProfile("reject", 0.0, metrics, tuple(reasons))
-
-    score = calculate_quality_score(metrics, settings)
-    if score >= settings.high_quality_score:
-        tier: Literal["high", "medium", "reject"] = "high"
-    elif score >= settings.medium_quality_score:
-        tier = "medium"
-    else:
-        tier = "reject"
-        reasons = ["quality_score_below_medium"]
-    return QualityProfile(tier, score, metrics, tuple(reasons))
+    warnings: list[str] = []
+    if metrics["detection_score"] < thresholds.low_detection_score:
+        warnings.append("low_detection_confidence")
+    if metrics["face_size_px"] < thresholds.small_face_size_px:
+        warnings.append("move_closer")
+    if metrics["blur_variance"] < thresholds.low_blur_variance:
+        warnings.append("hold_still")
+    if metrics["brightness"] < thresholds.low_brightness:
+        warnings.append("increase_lighting")
+    elif metrics["brightness"] > thresholds.high_brightness:
+        warnings.append("reduce_lighting")
+    if metrics["contrast"] < thresholds.low_contrast:
+        warnings.append("improve_contrast")
+    return tuple(warnings)
 
 
 def _validated_copy(frame: np.ndarray) -> np.ndarray:
@@ -161,48 +135,3 @@ def _crop_to_bbox(
     if right <= left or bottom <= top:
         return frame
     return frame[top:bottom, left:right]
-
-
-def _hard_failure_reasons(metrics: dict[str, float], settings: Settings) -> list[str]:
-    """返回会直接导致图片拒绝的质量指标原因。"""
-    reasons: list[str] = []
-    if metrics["detection_score"] < settings.min_detection_score:
-        reasons.append("detection_score_below_minimum")
-    if metrics["face_size_px"] < settings.min_face_size_px:
-        reasons.append("face_size_below_minimum")
-    if metrics["blur_variance"] < settings.min_blur_variance:
-        reasons.append("blur_below_minimum")
-    if metrics["brightness"] < settings.min_brightness:
-        reasons.append("underexposed")
-    if metrics["brightness"] > settings.max_brightness:
-        reasons.append("overexposed")
-    if metrics["contrast"] < settings.min_contrast:
-        reasons.append("contrast_below_minimum")
-    return reasons
-
-
-def calculate_quality_score(metrics: dict[str, float], settings: Settings) -> float:
-    """将五项原始指标合成为独立于硬拒绝结果的启发式质量分。
-
-    参数：
-        metrics：`measure_quality()` 产生的五项原始指标。
-        settings：用于归一化各指标的当前质量配置。
-    返回：
-        位于闭区间 `[0, 1]` 的启发式质量分。
-
-    该函数不会应用硬质量门，因此实验仍能比较已经被拒绝的样本。
-    """
-    detection = _clamp(
-        (metrics["detection_score"] - settings.min_detection_score)
-        / (1.0 - settings.min_detection_score)
-    )
-    face_size = _clamp(metrics["face_size_px"] / (settings.min_face_size_px * 2))
-    sharpness = _clamp(metrics["blur_variance"] / (settings.min_blur_variance * 2))
-    exposure = _clamp(1.0 - abs(metrics["brightness"] - 127.5) / 127.5)
-    contrast = _clamp(metrics["contrast"] / 64.0)
-    return 0.25 * detection + 0.25 * face_size + 0.25 * sharpness + 0.15 * exposure + 0.10 * contrast
-
-
-def _clamp(value: float) -> float:
-    """把数值限制在闭区间 `[0, 1]`。"""
-    return max(0.0, min(1.0, value))

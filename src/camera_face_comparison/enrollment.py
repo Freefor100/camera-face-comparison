@@ -11,8 +11,8 @@ import numpy as np
 
 from .config import Settings
 from .domain import Person
-from .face_engine import FaceInputError, FaceObservation, validate_single_face
-from .image_input import ImageInput, assess_quality
+from .face_engine import FaceObservation, normalize_embedding
+from .image_input import ImageInput, measure_quality
 from .repository import FaceRepository, SampleInput
 
 
@@ -20,7 +20,7 @@ class FaceExtractor(Protocol):
     """提供单人脸检测和特征提取能力的接口。"""
 
     def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
-        """从 BGR 图像中提取一张通过质量门控的人脸。"""
+        """从 BGR 图像中提取唯一人脸及其有效特征。"""
         ...
 
 
@@ -28,7 +28,7 @@ ImageSaver = Callable[[Path, np.ndarray], None]
 
 
 class EnrollmentService:
-    """协调质量检查、图片保存和标准人脸库持久化。"""
+    """协调单人脸校验、图片保存和标准人脸库持久化。"""
 
     def __init__(
         self,
@@ -51,9 +51,9 @@ class EnrollmentService:
             display_name：要显示的人员姓名。
             inputs：摄像头或本地图片输入，至少包含一项。
         返回：
-            新建的人员对象；第一张合格样本写入后即可参与识别。
+            新建的人员对象；第一张有效单人脸样本写入后即可参与识别。
         前置条件：
-            所有输入都必须恰好检测到一张符合当前质量规则的人脸；任一项失败都会回滚。
+            所有输入都必须恰好检测到一张人脸并产生有效 embedding；任一项失败都会回滚。
         """
 
         normalized_name = display_name.strip()
@@ -69,24 +69,15 @@ class EnrollmentService:
         try:
             for index, image_input in enumerate(inputs, start=1):
                 observation = self.face_engine.extract_single_face(image_input.frame)
-                validated = validate_single_face([observation], self.settings)
-                profile = assess_quality(image_input.frame, validated, self.settings)
-                if profile.tier == "reject":
-                    raise FaceInputError(
-                        "quality_rejected:" + ",".join(profile.reasons or ("low_score",))
-                    )
+                embedding = normalize_embedding(observation.embedding)
+                metrics = measure_quality(image_input.frame, observation)
                 staged_path = staging_dir / f"sample_{index:03d}.jpg"
                 self.image_saver(staged_path, image_input.frame)
                 samples.append(
                     SampleInput(
                         image_path=(Path("faces") / person_id / staged_path.name).as_posix(),
-                        embedding=validated.embedding,
-                        pose=f"sample_{index:03d}",
-                        quality={
-                            **profile.metrics,
-                            "quality_score": profile.score,
-                            "tier": profile.tier,
-                        },
+                        embedding=embedding,
+                        quality_metrics=metrics,
                         source_type=image_input.source_type,
                         image_sha256=_sha256_file(staged_path),
                     )
@@ -112,9 +103,9 @@ class EnrollmentService:
             person_id：已存在身份的编号。
             inputs：待追加的图片输入，至少包含一项。
         返回：
-            实际追加的合格样本数量。
+            实际追加的有效单人脸样本数量。
         前置条件：
-            所有输入都必须通过单人脸和质量检查；任一项失败都会回滚本次追加。
+            所有输入都必须产生单人脸和有效 embedding；任一项失败都会回滚本次追加。
         """
 
         if self.repository.get_person(person_id) is None:
@@ -131,12 +122,8 @@ class EnrollmentService:
         try:
             for index, image_input in enumerate(inputs, start=1):
                 observation = self.face_engine.extract_single_face(image_input.frame)
-                validated = validate_single_face([observation], self.settings)
-                profile = assess_quality(image_input.frame, validated, self.settings)
-                if profile.tier == "reject":
-                    raise FaceInputError(
-                        "quality_rejected:" + ",".join(profile.reasons or ("low_score",))
-                    )
+                embedding = normalize_embedding(observation.embedding)
+                metrics = measure_quality(image_input.frame, observation)
                 filename = f"sample_{operation_id}_{index:03d}.jpg"
                 staged_path = staging_dir / filename
                 final_path = person_dir / filename
@@ -145,13 +132,8 @@ class EnrollmentService:
                 samples.append(
                     SampleInput(
                         image_path=(Path("faces") / person_id / filename).as_posix(),
-                        embedding=validated.embedding,
-                        pose=f"sample_{index:03d}",
-                        quality={
-                            **profile.metrics,
-                            "quality_score": profile.score,
-                            "tier": profile.tier,
-                        },
+                        embedding=embedding,
+                        quality_metrics=metrics,
                         source_type=image_input.source_type,
                         image_sha256=_sha256_file(staged_path),
                     )
@@ -172,6 +154,7 @@ class EnrollmentService:
             raise
         finally:
             _remove_empty_directory(staging_dir.parent)
+
 
 def _sha256_file(path: Path) -> str:
     """分块计算图片文件的 SHA-256 哈希。"""

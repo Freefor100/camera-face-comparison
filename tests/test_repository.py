@@ -16,8 +16,13 @@ def _sample_input(
     return SampleInput(
         image_path=image_path,
         embedding=embedding,
-        pose="sample_001",
-        quality={"quality_score": 0.9, "tier": "high"},
+        quality_metrics={
+            "detection_score": 0.9,
+            "face_size_px": 160.0,
+            "blur_variance": 100.0,
+            "brightness": 120.0,
+            "contrast": 20.0,
+        },
         source_type="file",
         image_sha256="a" * 64,
     )
@@ -61,7 +66,7 @@ def test_repository_persists_person_and_embedding_across_reopen(tmp_path) -> Non
     assert [(item.id, item.display_name) for item in people] == [(person.id, "Alice")]
     assert len(samples) == 1
     assert samples[0].person_id == person.id
-    assert samples[0].pose == "sample_001"
+    assert samples[0].quality_metrics["face_size_px"] == 160.0
     assert np.allclose(samples[0].embedding, [0.1, 0.2, 0.3])
 
 

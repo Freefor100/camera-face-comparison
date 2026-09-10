@@ -12,7 +12,7 @@ from typing import Literal
 
 import numpy as np
 
-from .evaluation_cache import file_sha256
+from .experiment_artifacts import file_sha256
 from .joint_calibration import JointScoreRow
 from .lfw_dataset import LfwSplitProbe, LfwSplitProtocol
 from .raw_embedding_cache import RawEmbeddingCache, RawEmbeddingEntry

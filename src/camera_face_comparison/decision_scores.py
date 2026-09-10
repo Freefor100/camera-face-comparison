@@ -10,7 +10,7 @@ from time import perf_counter
 
 import numpy as np
 
-from .evaluation_cache import file_sha256
+from .experiment_artifacts import file_sha256
 from .lfw_dataset import LfwSplitProbe, LfwSplitProtocol
 from .raw_embedding_cache import RawEmbeddingCache
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import replace
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
@@ -15,17 +14,13 @@ from camera_face_comparison.face_engine import (
     FaceObservation,
     validate_single_face,
 )
-from camera_face_comparison.image_input import (
-    apply_quality_policy,
-    assess_quality,
-    calculate_quality_score,
-    measure_quality,
-)
+from camera_face_comparison.image_input import measure_quality, quality_warnings
 from camera_face_comparison.runtime import ExecutionBackend
 
 
 def _face(*, score: float = 0.95, size: int = 160, blur: float = 140.0) -> FaceObservation:
-    """构造可调检测分数、尺寸和清晰度的人脸观察对象。"""
+    """构造可调检测指标的人脸观察对象。"""
+
     return FaceObservation(
         bbox=(0.0, 0.0, float(size), float(size)),
         detection_score=score,
@@ -35,50 +30,46 @@ def _face(*, score: float = 0.95, size: int = 160, blur: float = 140.0) -> FaceO
     )
 
 
-def test_validate_single_face_rejects_multiple_people(tmp_path) -> None:
-    """合照不能被错误地作为一个身份录入。"""
-
-    settings = load_settings(tmp_path)
+def test_validate_single_face_only_blocks_zero_or_multiple_faces() -> None:
+    """检测分数较低也不能隐藏第二张脸；多人脸始终属于无效输入。"""
 
     with pytest.raises(FaceInputError, match="multiple_faces"):
-        validate_single_face([_face(), _face()], settings)
+        validate_single_face([_face(), _face(score=0.20)])
 
 
-def test_validate_single_face_ignores_a_low_confidence_extra_detection(tmp_path) -> None:
-    """低于门槛的误检不能把有效单人脸变成合照错误。"""
+def test_low_numeric_quality_still_returns_a_normalized_single_face() -> None:
+    """低分辨率、低检测分或模糊只提示，不能阻断有效 embedding。"""
 
-    settings = load_settings(tmp_path)
+    accepted = validate_single_face([_face(score=0.20, size=32, blur=1.0)])
 
-    accepted_face = validate_single_face([_face(), _face(score=0.55)], settings)
-
-    assert accepted_face.detection_score == 0.95
+    assert np.allclose(accepted.embedding, [0.424264, 0.565685, 0.707107])
 
 
-def test_validate_single_face_rejects_blurry_face(tmp_path) -> None:
-    """低质量样本不能进入标准人脸库。"""
+def test_quality_measurements_produce_non_blocking_adjustment_warnings(tmp_path) -> None:
+    """原始指标应保留，并把异常转换为可操作提示而非拒绝结果。"""
 
     settings = load_settings(tmp_path)
+    frame = np.full((240, 320, 3), 5, dtype=np.uint8)
+    metrics = measure_quality(frame, _face(score=0.2, size=32, blur=1.0))
 
-    with pytest.raises(FaceInputError, match="blur_below_minimum"):
-        validate_single_face([_face(blur=20.0)], settings)
+    warnings = quality_warnings(metrics, settings.quality_warnings)
+
+    assert set(metrics) == {
+        "detection_score",
+        "face_size_px",
+        "blur_variance",
+        "brightness",
+        "contrast",
+    }
+    assert "low_detection_confidence" in warnings
+    assert "move_closer" in warnings
+    assert "hold_still" in warnings
+    assert "increase_lighting" in warnings
 
 
-def test_validate_single_face_returns_valid_face(tmp_path) -> None:
-    """有效样本在持久化或比对前必须完成特征归一化。"""
+def test_face_engine_adapts_model_output_and_normalizes_embedding(tmp_path) -> None:
+    """模型适配器只返回通用观察对象，并在单脸出口完成归一化。"""
 
-    settings = load_settings(tmp_path)
-    valid_face = _face()
-
-    accepted_face = validate_single_face([valid_face], settings)
-
-    assert accepted_face.bbox == valid_face.bbox
-    assert np.allclose(accepted_face.embedding, [0.424264, 0.565685, 0.707107])
-
-
-def test_face_engine_adapts_model_output_without_importing_vendor_types(tmp_path) -> None:
-    """更换 InsightFace 对象包装方式不能把厂商类型泄漏到应用逻辑。"""
-
-    settings = load_settings(tmp_path)
     vendor_face = SimpleNamespace(
         bbox=np.array([10.0, 20.0, 190.0, 200.0]),
         det_score=0.96,
@@ -89,17 +80,17 @@ def test_face_engine_adapts_model_output_without_importing_vendor_types(tmp_path
     blur_inputs: list[tuple[int, int, int]] = []
 
     def blur_metric(face_crop: np.ndarray) -> float:
-        """记录清晰度输入裁剪尺寸并返回合格清晰度。"""
+        """记录清晰度裁剪尺寸并返回测量值。"""
+
         blur_inputs.append(face_crop.shape)
-        return 150.0
+        return 1.0
 
-    engine = FaceEngine(settings, analyzer=analyzer, blur_metric=blur_metric)
-
+    engine = FaceEngine(analyzer=analyzer, blur_metric=blur_metric)
     observation = engine.extract_single_face(np.zeros((240, 320, 3), dtype=np.uint8))
 
     assert observation.bbox == (10.0, 20.0, 190.0, 200.0)
     assert np.allclose(observation.embedding, [0.6, 0.8])
-    assert observation.blur_variance == 150.0
+    assert observation.blur_variance == 1.0
     assert blur_inputs == [(180, 180, 3)]
 
 
@@ -117,12 +108,12 @@ def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeyp
 
         def __init__(self, **kwargs) -> None:
             """保存模型构造参数。"""
-            self.kwargs = kwargs
+
             type(self).last_kwargs = kwargs
 
         def prepare(self, **kwargs) -> None:
             """保存模型准备参数。"""
-            self.prepare_kwargs = kwargs
+
             type(self).last_prepare_kwargs = kwargs
 
     app_module = ModuleType("insightface.app")
@@ -145,65 +136,5 @@ def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeyp
     assert os.environ["NO_ALBUMENTATIONS_UPDATE"] == "1"
     assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"
     assert os.environ["MPLCONFIGDIR"] == str(settings.logs_dir / "matplotlib")
-    assert FakeAnalysis.last_kwargs["providers"] == [
-        "CUDAExecutionProvider",
-        "CPUExecutionProvider",
-    ]
     assert FakeAnalysis.last_kwargs["allowed_modules"] == ["detection", "recognition"]
     assert FakeAnalysis.last_prepare_kwargs["ctx_id"] == 0
-
-
-def test_quality_profile_rejects_an_underexposed_face(tmp_path) -> None:
-    """清晰但几乎全黑的人脸裁剪仍不适合身份判定。"""
-
-    settings = load_settings(tmp_path)
-    frame = np.full((240, 320, 3), 5, dtype=np.uint8)
-    profile = assess_quality(frame, _face(), settings)
-
-    assert profile.tier == "reject"
-    assert "underexposed" in profile.reasons
-
-
-def test_quality_measurement_is_independent_from_policy_thresholds(tmp_path) -> None:
-    """调整质量门时不能改变同一张图片测得的原始指标。"""
-
-    settings = load_settings(tmp_path)
-    frame = np.full((240, 320, 3), 90, dtype=np.uint8)
-
-    metrics = measure_quality(frame, _face())
-    accepted = apply_quality_policy(
-        metrics,
-        replace(
-            settings,
-            min_brightness=80.0,
-            min_contrast=0.0,
-            medium_quality_score=0.0,
-        ),
-    )
-    rejected = apply_quality_policy(
-        metrics,
-        replace(
-            settings,
-            min_brightness=100.0,
-            min_contrast=0.0,
-            medium_quality_score=0.0,
-        ),
-    )
-
-    assert metrics["brightness"] == 90.0
-    assert accepted.tier != "reject"
-    assert rejected.tier == "reject"
-    assert rejected.reasons == ("underexposed",)
-
-
-def test_quality_score_remains_available_for_rejected_measurements(tmp_path) -> None:
-    """质量实验必须能分析硬门以下样本，不能把它们的启发式分数全部改成零。"""
-
-    settings = load_settings(tmp_path)
-    metrics = measure_quality(np.full((240, 320, 3), 20, dtype=np.uint8), _face())
-
-    profile = apply_quality_policy(metrics, settings)
-    score = calculate_quality_score(metrics, settings)
-
-    assert profile.tier == "reject"
-    assert score > 0.0
