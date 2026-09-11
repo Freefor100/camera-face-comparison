@@ -47,6 +47,7 @@
 - Phase 5B 已补齐 13,233 张 XQLFW 同路径 embedding，生成六场景、六种聚合的 205,344 条无阈值排序，并显式比较最高分阈值、仅候选分差、真正双条件和 NAC。
 - Phase 5B 的统一主工作点选出 `Mean Prototype + score_threshold`，`minimum_score=0.5557855`。NAC-32 的最差 TPIR 只高 0.39 个百分点，未达到预先规定的 1 个百分点复杂规则收益门槛。
 - 冻结参数在 Calibration 的 3～100 人小 Gallery 中完成 240 次重放，全部满足 1% FPIR；随后只执行一次独立 Evaluation，最差跨质量 TPIR 为 66.30%，最坏 FPIR 为 1.43%。完整计数和置信区间见 Phase 5B 结果。
+- 已用真实 LFW embedding 完成 [Gallery 内存索引 CPU/CUDA 基准](docs/gallery-index-benchmark.md)：4,588 人时，当前重复重建路径 p50 为 53.79 ms，CPU 连续矩阵为 0.0528 ms；CUDA `MatMul+TopK` 为 0.1321 ms。该索引尚未接入桌面运行时，不能把微基准收益写成 E2E 收益。
 
 ## 阶段 TODO
 
@@ -111,6 +112,7 @@
 - [x] **Phase 5B：**显式比较最高分阈值、仅候选分差、真正双条件和 NAC；在四个主要场景共同选择一套参数。
 - [x] **Phase 5B：**在 Calibration 内完成 3～100 人稳定性检查，冻结 `Mean Prototype + score_threshold, T=0.5557855` 后只运行一次 Evaluation。
 - [x] 把 Phase 5B 冻结的 Mean Prototype 和明确接收策略接入桌面应用，删除旧质量加权 Top-K、分层阈值和数值质量硬拒绝。
+- [x] 使用真实 LFW embedding 比较当前重建路径、CPU 连续矩阵和 CUDA `MatMul+TopK`，验证 CPU 精确矩阵在当前单 Query 场景更合适，并记录启动构建、内存和结果一致性。
 - [ ] 实现“短时间多帧采集 + 质量择优”，以单帧为基线做相同人员、场景、方法和阈值的复测。
 - [ ] 记录输入、检测、特征、检索、判定、日志和 UI 的分阶段及 E2E 耗时，只优化实测瓶颈。
 - [ ] 完成 UI 视觉、状态反馈、操作说明、故障排查和跨平台收尾。
@@ -122,7 +124,6 @@
 - [ ] Gallery 至少包含 3 个身份；具体数量在本阶段根据展示需要决定。
 - [ ] 本人站到摄像头前演示 Known，同学临时测试 Unknown。
 - [ ] 演示动态新增身份、追加样本、重启恢复和离线运行。
-- [ ] 最终 Demo Gallery 不参与前面的阈值标定或鲁棒性调参。
 
 LFW 用于固定开放集协议、质量验证和自然域基线；XQLFW 与同路径 LFW 一起参与 Phase 5B 跨质量统一选参；QMUL 只负责监控小脸域压力和系统局限性。摄像头不承担大规模调参，只用于多帧扩展的同条件复测与最终功能展示。最终 Demo Gallery 要等运行时规则和 UI 冻结后再建立。
 
