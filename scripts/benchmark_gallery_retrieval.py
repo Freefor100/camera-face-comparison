@@ -23,10 +23,10 @@ FROZEN_MINIMUM_SCORE = 0.5557855367660522
 
 
 def parse_args() -> argparse.Namespace:
-    """读取真实 LFW Gallery 检索基准参数。"""
+    """读取真实 LFW 标准库检索基准参数。"""
 
     parser = argparse.ArgumentParser(
-        description="Benchmark exact CPU and CUDA Gallery retrieval on cached LFW embeddings."
+        description="使用已缓存的 LFW 人脸特征向量测试 CPU 和 CUDA 精确标准库检索。"
     )
     parser.add_argument(
         "--protocol",
@@ -41,12 +41,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/experiments/gallery-index/benchmark_report.json"),
+        default=Path("data/experiments/gallery-retrieval/benchmark_report.json"),
     )
     parser.add_argument(
         "--matrix-output",
         type=Path,
-        default=Path("data/experiments/gallery-index/lfw_mean_prototypes.npy"),
+        default=Path("data/experiments/gallery-retrieval/lfw_mean_prototypes.npy"),
     )
     parser.add_argument("--query-count", type=int, default=200)
     parser.add_argument("--rebuild-query-count", type=int, default=30)
@@ -98,7 +98,7 @@ def main() -> int:
     }
     gallery = {person_id: rows for person_id, rows in gallery.items() if rows}
     if len(gallery) < 3:
-        raise RuntimeError("valid LFW Gallery has fewer than three identities")
+        raise RuntimeError("有效 LFW 标准库不足三个身份")
 
     prototype_started = perf_counter_ns()
     person_ids, full_matrix = _build_prototype_matrix(gallery)
@@ -189,7 +189,7 @@ def main() -> int:
         )
 
     report = {
-        "experiment": "gallery-index-benchmark-v1",
+        "experiment": "gallery-exact-retrieval-benchmark-v1",
         "scope": "retrieval-only; excludes image decode, face inference, integrity scan and log write",
         "seed": args.seed,
         "protocol": {
@@ -239,7 +239,7 @@ def main() -> int:
 
 
 def _read_enrollment(protocol: Mapping[str, object]) -> dict[str, list[str]]:
-    """从固定协议读取人员到 Gallery 路径的映射。"""
+    """从固定协议读取人员到标准库图片路径的映射。"""
 
     raw = protocol.get("enrollment")
     if not isinstance(raw, dict):
@@ -253,7 +253,7 @@ def _read_enrollment(protocol: Mapping[str, object]) -> dict[str, list[str]]:
 
 
 def _read_probe_paths(protocol: Mapping[str, object]) -> list[str]:
-    """从固定协议读取全部 Probe 相对路径。"""
+    """从固定协议读取全部待识别图片相对路径。"""
 
     raw = protocol.get("probes")
     if not isinstance(raw, list):
@@ -291,7 +291,7 @@ def _load_embeddings(
     extraction_id: str,
     paths: Sequence[str],
 ) -> dict[str, np.ndarray]:
-    """按路径分块读取有效 float32 embedding，避免 SQLite 参数上限。"""
+    """按路径分块读取有效 float32 人脸特征向量，避免 SQLite 参数上限。"""
 
     entries: dict[str, np.ndarray] = {}
     with sqlite3.connect(f"file:{cache_path}?mode=ro", uri=True) as connection:
@@ -318,7 +318,7 @@ def _load_embeddings(
 def _build_prototype_matrix(
     gallery: Mapping[str, Sequence[np.ndarray]],
 ) -> tuple[tuple[str, ...], np.ndarray]:
-    """按稳定人员顺序构造归一化 Mean Prototype 矩阵。"""
+    """按稳定人员顺序构造归一化人员平均特征向量矩阵。"""
 
     person_ids = tuple(sorted(gallery))
     prototypes: list[np.ndarray] = []
@@ -331,7 +331,7 @@ def _build_prototype_matrix(
 def _select_queries(
     probes: Mapping[str, np.ndarray], count: int, seed: int
 ) -> list[np.ndarray]:
-    """固定种子选择不同真实 Probe embedding。"""
+    """固定种子选择不同的真实待识别人脸特征向量。"""
 
     paths = sorted(probes)
     random.Random(seed).shuffle(paths)
@@ -341,7 +341,7 @@ def _select_queries(
 
 
 def _parse_scales(value: str, full_count: int) -> list[int]:
-    """解析递增 Gallery 规模，并把 full 替换为真实人数。"""
+    """解析递增标准库规模，并把 full 替换为真实人数。"""
 
     result: list[int] = []
     for item in value.split(","):
@@ -359,7 +359,7 @@ def _benchmark(
     queries: Sequence[np.ndarray],
     warmup_count: int,
 ) -> dict[str, float | int]:
-    """预热后逐次记录同步单 Query 延迟分布。"""
+    """预热后逐次记录单个待识别向量的同步检索延迟分布。"""
 
     for index in range(warmup_count):
         operation(queries[index % len(queries)])
@@ -383,7 +383,7 @@ def _production_search(
     query: np.ndarray,
     gallery: Mapping[str, Sequence[np.ndarray]],
 ) -> tuple[str | None, float | None, float | None]:
-    """执行当前生产代码的重建原型、完整排序和阈值判定。"""
+    """执行当前运行代码的人员表示重建、完整排序和阈值判定。"""
 
     decision = recognize_embedding(
         query_embedding=query,
@@ -394,7 +394,7 @@ def _production_search(
 
 
 def _cached_python_search(query: np.ndarray, matrix: np.ndarray) -> tuple[int, float, float]:
-    """使用缓存原型但仍逐行执行 Python 点积，作为中间对照。"""
+    """使用提前计算的人员表示，但仍逐行执行 Python 点积。"""
 
     normalized = _normalize(query)
     scores = np.asarray([float(normalized @ row) for row in matrix], dtype=np.float32)
@@ -450,7 +450,7 @@ def _add_cuda_results(
     queries: Sequence[np.ndarray],
     warmup_count: int,
 ) -> dict[str, Any]:
-    """通过 ONNX Runtime CUDA MatMul+TopK 测试原型常驻显存检索。"""
+    """通过 ONNX Runtime CUDA MatMul+TopK 测试人员表示常驻显存的检索。"""
 
     try:
         backend = detect_execution_backend()
@@ -509,7 +509,7 @@ def _add_cuda_results(
 
 
 def _build_cuda_session(matrix: np.ndarray):
-    """创建只含 MatMul 与 TopK 的 CUDA ONNX Runtime session。"""
+    """创建只含 MatMul 与 TopK 的 CUDA ONNX Runtime 推理会话。"""
 
     import onnx
     import onnxruntime as ort
@@ -527,7 +527,7 @@ def _build_cuda_session(matrix: np.ndarray):
                 "TopK", ["scores", "top_k"], ["values", "indices"], axis=1, largest=1, sorted=1
             ),
         ],
-        "gallery-index-benchmark",
+        "gallery-exact-retrieval-benchmark",
         [query],
         [values, indices],
         initializer=[weights, k],
@@ -535,14 +535,14 @@ def _build_cuda_session(matrix: np.ndarray):
     model = helper.make_model(
         graph,
         opset_imports=[helper.make_opsetid("", 18)],
-        producer_name="camera-face-comparison-gallery-benchmark",
+        producer_name="camera-face-comparison-gallery-retrieval-benchmark",
     )
     model.ir_version = 10
     onnx.checker.check_model(model)
     options = ort.SessionOptions()
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     options.enable_profiling = True
-    options.profile_file_prefix = "/tmp/camera-face-comparison-gallery-cuda"
+    options.profile_file_prefix = "/tmp/camera-face-comparison-gallery-retrieval-cuda"
     started = perf_counter_ns()
     session = ort.InferenceSession(
         model.SerializeToString(),
@@ -556,7 +556,7 @@ def _build_cuda_session(matrix: np.ndarray):
 
 
 def _finish_cuda_profile(session: object) -> dict[str, str]:
-    """结束 ORT profile 并返回计算节点实际使用的 provider。"""
+    """结束 ONNX Runtime 性能跟踪并返回计算节点实际使用的执行后端。"""
 
     profile_path = Path(session.end_profiling())
     payload = json.loads(profile_path.read_text(encoding="utf-8"))

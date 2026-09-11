@@ -1,15 +1,16 @@
 # 数据集评测记录
 
-本文记录各数据集在项目中的职责、已完成产物和限制。单元测试通过数不代表识别效果，小型 pilot 也不替代完整实验。
+本文记录各数据集在项目中的职责、已完成产物和限制。单元测试通过数不代表识别效果，小规模试运行也不替代完整实验。
+数据角色和指标定义见 [术语与内部命名](术语与内部命名.md)。
 
 ## 1. 数据集职责
 
 | 数据集 | 项目用途 | 已有规模 | 不负责回答的问题 |
 | --- | --- | --- | --- |
-| LFW deep-funneled | Phase 2 固定开放集 1:N Gallery/Probe、保存无阈值分数；Phase 3 质量退化实验；Phase 4 联合标定 | 13,233 张图片 | 不代表桌面摄像头的设备、距离和现场光照域 |
-| XQLFW | Phase 5A 真实跨质量 1:1 验证；Phase 5B 与 LFW 同路径构造跨质量开放集 1:N 场景 | 官方 6,000 对涉及 7,263 张；完整变体目录对应 LFW 13,233 张 | 不单独产生一套 XQLFW 专用部署阈值 |
-| QMUL-SurvFace | Phase 5 远距离、小脸和监控域覆盖压力分析 | Gallery 60,294，Mated Probe 60,423，Unmated Probe 121,736 | 不等价于普通 UVC 摄像头，不用于设置桌面识别参数 |
-| 外置摄像头开发样本 | Phase 4 后复核桌面域，Phase 5 多帧与 E2E 实验 | 按场景现场采集 | 不与最终 Demo Gallery 混用，不替代公开数据集的固定协议 |
+| LFW deep-funneled | 阶段 2 固定开放集 1:N 标准库/待识别图片、保存未应用接收规则的候选分数；阶段 3 质量退化实验；阶段 4 联合标定 | 13,233 张图片 | 不代表桌面摄像头的设备、距离和现场光照域 |
+| XQLFW | 阶段 5A 真实跨质量 1:1 验证；阶段 5B 与 LFW 同路径构造跨质量开放集 1:N 场景 | 官方 6,000 对涉及 7,263 张；完整变体目录对应 LFW 13,233 张 | 不单独产生一套 XQLFW 专用部署阈值 |
+| QMUL-SurvFace | 阶段 5 远距离、小脸和监控域覆盖压力分析 | 标准库 60,294，同源待识别图片 60,423，非同源待识别图片 121,736 | 不等价于普通 UVC 摄像头，不用于设置桌面识别参数 |
+| 外置摄像头开发样本 | 阶段 4 后复核桌面域，阶段 5 多帧与端到端实验 | 按场景现场采集 | 不与最终演示标准库混用，不替代公开数据集的固定协议 |
 
 本地位置：
 
@@ -29,20 +30,20 @@
 
 | 任务 | 覆盖 | 状态 | 本地产物 |
 | --- | --- | --- | --- |
-| LFW pilot | 7 张有效 Probe | 已完成；仅作真实模型链路烟雾测试 | `data/logs/phase2_algorithm_baseline.json` |
-| LFW 固定阈值历史诊断 | Gallery 7,490、Probe 5,743 | 已完成；结果依赖初始阈值，不作最终方法结论 | `data/logs/lfw_full_algorithm_baseline.json` |
-| LFW Phase 2 无阈值结果 | 有效 Gallery 4,735；有效 Probe 3,842；六方法 23,052 条 | 已完成；身份互斥分区和拒绝项已保存 | `data/experiments/phase2/` |
-| LFW Phase 4 自然原始结果 | 有效 Gallery 7,465；有效 Probe 5,720；六方法 34,320 条 | 已完成；无质量预筛，已完成联合标定和一次独立 Evaluation | `data/experiments/phase4/` |
-| LFW/XQLFW 跨质量开放集联合标定 | 六场景、六种聚合、四类接收规则 | 已完成；主工作点选择 Mean Prototype + 最高分阈值 `0.555786` | `data/experiments/phase5b/` |
-| 小 Gallery 稳定性复核 | 3/5/10/25/50/100 人，每档 10 次、四场景 | 已完成 Calibration-only 固定参数重放；240 个结果均满足 1% FPIR | `data/experiments/phase5b/gallery_scale_report.json` |
-| 跨质量独立 Evaluation | 六场景、三个预先冻结参考工作点 | 已执行一次；主规则最差 TPIR 66.30%、最坏 FPIR 1.43%，含身份 bootstrap 95% 区间 | `data/experiments/phase5b/evaluation_report.json` |
-| XQLFW 全量跨质量实验 | 7,263 张、6,000 对；有效 7,200 张、5,894 对 | 已完成 CUDA 原始提取、官方 10 折验证及与原始 LFW 的 5,871 个共同 Pair 对比 | `data/experiments/phase5/` |
-| XQLFW 推理子阶段优化 | 同一 7,263 张图片、独立空缓存 | 只执行检测与识别后，有效 embedding 平均耗时下降 26.0%；embedding 与验证结果不变 | `data/experiments/phase5/xqlfw_optimized_*` |
+| LFW 小规模试运行 | 7 张有效待识别图片 | 已完成；仅作真实模型链路连通性测试 | `data/logs/phase2_algorithm_baseline.json` |
+| LFW 固定阈值历史诊断 | 标准库 7,490、待识别图片 5,743 | 已完成；结果依赖初始阈值，不作最终方法结论 | `data/logs/lfw_full_algorithm_baseline.json` |
+| LFW 阶段 2 连续候选分数 | 有效标准库 4,735；有效待识别图片 3,842；六种聚合方法 23,052 条 | 已完成；未应用接收阈值，身份互斥分区和拒绝项已保存 | `data/experiments/phase2/` |
+| LFW 阶段 4 自然原始结果 | 有效标准库 7,465；有效待识别图片 5,720；六方法 34,320 条 | 已完成；无质量预筛，已完成联合标定和一次独立验证集 | `data/experiments/phase4/` |
+| LFW/XQLFW 跨质量开放集联合标定 | 六场景、六种聚合、四类接收规则 | 已完成；在 1% 目标下选择人员平均特征向量 + 最高分阈值 `0.555786` | `data/experiments/phase5b/` |
+| 小型标准库稳定性复核 | 3/5/10/25/50/100 人，每档 10 次、四场景 | 已完成固定参数、只使用参数选择集的重放；240 个结果均满足 1% 未知人员误接收率 | `data/experiments/phase5b/gallery_scale_report.json` |
+| 跨质量独立验证集 | 六场景、三个预先固定的参考目标 | 已执行一次；主规则最差已登记人员正确接收率 66.30%、最坏未知人员误接收率 1.43%，含按来源身份重复抽样得到的 95% 置信区间 | `data/experiments/phase5b/evaluation_report.json` |
+| XQLFW 全量跨质量实验 | 7,263 张、6,000 对；有效 7,200 张、5,894 对 | 已完成 CUDA 原始提取、官方 10 折验证及与原始 LFW 的 5,871 个共同图片对比较 | `data/experiments/phase5/` |
+| XQLFW 推理子阶段优化 | 同一 7,263 张图片、独立空缓存 | 只执行检测与识别后，有效人脸特征向量平均耗时下降 26.0%；人脸特征向量与验证结果不变 | `data/experiments/phase5/xqlfw_optimized_*` |
 | QMUL 官方协议 | 全部官方 MAT 标签和目录 | 已核验 | `data/logs/qmul_survface_protocol.json` |
-| QMUL 旧尺寸门压力预检 | 60,294 张 Gallery | 旧 112 px 门下无有效 Gallery；只作为“预筛会掩盖模型覆盖”的历史证据 | `data/logs/cache/qmul_survface.sqlite` |
-| QMUL 全量原始压力实验 | 242,453 张；436 张有效 embedding | 已完成无质量门原始提取；70/3,000 个 Gallery 身份可用，Mated 仅 4 张可评分且 Rank-1 为 0 | `data/experiments/phase5/qmul_*` |
+| QMUL 旧尺寸规则压力预检 | 60,294 张标准库 | 旧 112 px 拒绝条件下无有效标准库；只作为“预筛会掩盖模型覆盖”的历史证据 | `data/logs/cache/qmul_survface.sqlite` |
+| QMUL 全量原始压力实验 | 242,453 张；436 张有效人脸特征向量 | 已完成不使用质量拒绝规则的原始提取；70/3,000 个标准库身份可用，同源待识别图片仅 4 张可评分且第一候选均错误 | `data/experiments/phase5/qmul_*` |
 
-LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,185 张获得 embedding、48 张 FTE。再次读取同一缓存时 13,233 张全部命中且模型推理为 0；聚合或判定参数变化不再触发 InsightFace。
+LFW 阶段 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,185 张获得人脸特征向量、48 张人脸特征提取失败。再次读取同一缓存时 13,233 张全部命中且模型推理为 0；聚合或判定参数变化不再触发 InsightFace。
 
 ## 3. LFW 当前可复现入口
 
@@ -54,15 +55,15 @@ LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,
   --output ./data/datasets/lfw_full_open_set_protocol.json
 ```
 
-### 3.2 提取与缓存原始 embedding
+### 3.2 提取与缓存原始人脸特征向量
 
 ```bash
 .venv/bin/python scripts/extract_lfw_raw_embeddings.py --data-dir ./data
 ```
 
-原始缓存不执行数值质量预筛；只有模型、检测、对齐或图片内容变化才需要重新提取。
+原始缓存不执行基于数值指标的质量预筛；只有模型、检测、对齐或图片内容变化才需要重新提取。
 
-### 3.3 从缓存导出固定分区和无阈值分数
+### 3.3 从缓存导出固定分区和连续候选分数
 
 ```bash
 .venv/bin/python scripts/export_lfw_decision_scores.py \
@@ -72,9 +73,9 @@ LFW Phase 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,
   --output-dir ./data/experiments/phase4
 ```
 
-缓存只有一个批次时脚本自动选择；有多个批次时必须用 `--cache-extraction-id` 明确指定。脚本不会初始化 `FaceEngine`，缓存缺失或图片 SHA-256 改变时直接失败。自然 LFW 的旧扫描器已被 Phase 5B 四规则联合标定替代。
+缓存只有一个批次时脚本自动选择；有多个批次时必须用 `--cache-extraction-id` 明确指定。脚本不会初始化 `FaceEngine`，缓存缺失或图片 SHA-256 改变时直接失败。自然 LFW 的旧扫描器已被阶段 5B 四规则联合标定替代。
 
-## 4. Phase 5 评测入口
+## 4. 阶段 5 评测入口
 
 XQLFW：
 
@@ -96,11 +97,11 @@ QMUL-SurvFace：
   --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
 ```
 
-正式结果见 [Phase 5 XQLFW 结果](phase-5-xqlfw-results.md)、
-[Phase 5 QMUL 结果](phase-5-qmul-results.md)和
-[Phase 5B 联合标定结果](phase-5b-cross-quality-results.md)。QMUL 的有效分母极小；历史机械阈值迁移报告只证明发生全拒绝，当前代码只保留原始覆盖提取入口，不把它当作桌面部署评测器。
+正式结果见 [阶段 5 XQLFW 结果](phase-5-xqlfw-results.md)、
+[阶段 5 QMUL 结果](phase-5-qmul-results.md)和
+[阶段 5B 联合标定结果](phase-5b-cross-quality-results.md)。QMUL 的有效分母极小；历史机械阈值迁移报告只证明发生全拒绝，当前代码只保留原始覆盖提取入口，不把它当作桌面部署评测器。
 
-Phase 5B 跨质量开放集：
+阶段 5B 跨质量开放集：
 
 ```bash
 .venv/bin/python scripts/extract_xqlfw_raw_embeddings.py \
@@ -121,9 +122,9 @@ Phase 5B 跨质量开放集：
 
 ## 5. 结果解释规则
 
-1. Gallery、Known Probe、Unknown Probe、Calibration、Evaluation 和最终 Demo Gallery 角色不得混用。
-2. Calibration/Evaluation 在质量过滤前按来源身份划分，避免只挑选模型成功样本。
-3. 无阈值 Rank-1 只评价 Known 第一候选排序；Unknown FPIR 必须在指定阈值工作点统计。
+1. 标准库、已登记人员图片、未登记人员图片、参数选择集、独立验证集和最终演示标准库角色不得混用。
+2. 参数选择集/独立验证集在质量过滤前按来源身份划分，避免只挑选模型成功样本。
+3. 尚未应用接收规则时的第一候选身份正确率只评价候选排序；未登记人员误接收率必须在应用指定接收阈值后统计。
 4. 聚合方法改变会改变分数分布，匹配阈值和候选分差必须与方法联合选择。
-5. XQLFW 官方 Pair 是 1:1 verification；Phase 5B 只利用其与 LFW 同身份、同路径的图像变体构造 1:N 跨质量场景。QMUL 仍只作为监控域压力集。
+5. XQLFW 官方图片对用于一对一验证；阶段 5B 只利用其与 LFW 同身份、同路径的图像变体构造一对多跨质量场景。QMUL 仍只作为监控域压力集。
 6. 所有正式结论必须记录模型、质量规则、协议哈希、拒绝数量、有效分母和运行环境。
