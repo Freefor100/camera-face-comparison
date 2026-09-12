@@ -15,8 +15,7 @@ import numpy as np
 from threadpoolctl import threadpool_info, threadpool_limits
 
 from camera_face_comparison.experiment_artifacts import file_sha256, write_json_atomic
-from camera_face_comparison.open_set_policy import ScoreThresholdPolicy
-from camera_face_comparison.recognition import recognize_embedding
+from camera_face_comparison.open_set_policy import ScoreThresholdPolicy, apply_open_set_policy
 from camera_face_comparison.runtime import detect_execution_backend
 
 FROZEN_MINIMUM_SCORE = 0.5557855367660522
@@ -383,12 +382,17 @@ def _production_search(
     query: np.ndarray,
     gallery: Mapping[str, Sequence[np.ndarray]],
 ) -> tuple[str | None, float | None, float | None]:
-    """执行当前运行代码的人员表示重建、完整排序和阈值判定。"""
+    """执行实验用的逐查询人员原型重建、完整排序和阈值判定。"""
 
-    decision = recognize_embedding(
-        query_embedding=query,
-        embeddings_by_person=gallery,
-        policy=ScoreThresholdPolicy(FROZEN_MINIMUM_SCORE),
+    normalized_query = _normalize(query)
+    person_scores: dict[str, float] = {}
+    for person_id, embeddings in gallery.items():
+        normalized_samples = np.stack([_normalize(embedding) for embedding in embeddings])
+        prototype = _normalize(np.mean(normalized_samples, axis=0))
+        person_scores[person_id] = float(normalized_query @ prototype)
+    decision = apply_open_set_policy(
+        person_scores,
+        ScoreThresholdPolicy(FROZEN_MINIMUM_SCORE),
     )
     return decision.top_person_id, decision.top_score, decision.second_score
 
