@@ -27,6 +27,7 @@ from ..config import Settings
 from ..domain import Person, RecognitionResult
 from ..enrollment import EnrollmentService
 from ..face_engine import FaceEngine, FaceInputError
+from ..face_library import FaceLibrarySnapshot, InMemoryFaceLibrary
 from ..image_input import ImageInput
 from ..integrity import verify_library
 from ..recognition import RecognitionService
@@ -72,7 +73,7 @@ class CameraWorker(QThread):
 
 
 class RecognitionWorker(QThread):
-    """在后台线程中执行一次人脸检测、完整性检查和 1:N 比对。"""
+    """在后台线程中执行一次人脸检测和基于内存快照的 1:N 比对。"""
 
     result_ready = Signal(object)
     worker_error = Signal(str)
@@ -84,6 +85,7 @@ class RecognitionWorker(QThread):
         settings: Settings,
         face_engine: FaceEngine,
         image_input: ImageInput,
+        library_snapshot: FaceLibrarySnapshot,
     ) -> None:
         """创建一次识别任务。
 
@@ -92,21 +94,26 @@ class RecognitionWorker(QThread):
             settings：当前运行配置。
             face_engine：人脸检测和特征提取引擎。
             image_input：待识别的独立图片输入。
+            library_snapshot：本次任务使用的不可变标准库快照。
         """
         super().__init__()
         self._database_path = database_path
         self._settings = settings
         self._face_engine = face_engine
         self._image_input = image_input
+        self._library_snapshot = library_snapshot
 
     def run(self) -> None:
         """在线程中打开独立仓库执行识别，并保证结束时关闭连接。"""
         repository: FaceRepository | None = None
         try:
             repository = FaceRepository(self._database_path)
-            result = RecognitionService(repository, self._settings, self._face_engine).compare_input(
-                self._image_input
-            )
+            result = RecognitionService(
+                repository,
+                self._settings,
+                self._face_engine,
+                self._library_snapshot,
+            ).compare_input(self._image_input)
             self.result_ready.emit(result)
         except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
             self.worker_error.emit(str(error))
@@ -142,6 +149,7 @@ class MainWindow(QMainWindow):
         self._face_engine = face_engine
         self._camera = camera
         self._repository = FaceRepository(settings.database_path)
+        self._face_library = InMemoryFaceLibrary.from_repository(self._repository)
         self._camera_worker: CameraWorker | None = None
         self._recognition_worker: RecognitionWorker | None = None
         self._current_frame: np.ndarray | None = None
@@ -331,6 +339,7 @@ class MainWindow(QMainWindow):
             settings=self._settings,
             face_engine=self._face_engine,
             image_input=image_input,
+            library_snapshot=self._face_library.snapshot(),
         )
         self._recognition_worker.result_ready.connect(self.on_recognition_result)
         self._recognition_worker.worker_error.connect(self.on_recognition_error)
@@ -390,6 +399,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "新增人员失败", str(error))
             return
+        self._face_library.rebuild(self._repository)
         self.refresh_people()
         self.status_label.setText(self._enrollment_message(person))
 
@@ -409,6 +419,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "新增人员失败", str(error))
             return
+        self._face_library.rebuild(self._repository)
         self.refresh_people()
         self.status_label.setText(self._enrollment_message(person))
 
@@ -425,6 +436,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "追加样本失败", str(error))
             return
+        self._face_library.refresh_person(self._repository, person_id)
         self.refresh_people()
         self.status_label.setText(f"已追加 {count} 张有效单人脸图片。")
 
@@ -444,6 +456,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "追加样本失败", str(error))
             return
+        self._face_library.refresh_person(self._repository, person_id)
         self.refresh_people()
         self.status_label.setText("已为选中人员追加一张有效单人脸图片。")
 

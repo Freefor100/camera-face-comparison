@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
@@ -110,6 +110,25 @@ def apply_open_set_policy(
     """
 
     ranked = sorted(person_scores.items(), key=lambda item: (-float(item[1]), item[0]))
+    return apply_ranked_open_set_policy(ranked, policy)
+
+
+def apply_ranked_open_set_policy(
+    ranked: Sequence[tuple[str, float]],
+    policy: RecognitionPolicy,
+) -> OpenSetDecision:
+    """对已按分数降序排列的候选列表应用开放集接收规则。
+
+    参数：
+        ranked：候选身份及分数，必须已按分数降序排列；同分时按身份编号排列。
+        policy：最高分、候选分差、联合或 NAC 策略。
+    返回：
+        包含候选分数、实际接收分数和拒绝原因的判定。
+    前置条件：
+        候选列表中的分数必须是有限数；使用 NAC 时需要至少两个候选。
+    """
+
+    ranked = list(ranked)
     if not ranked:
         return OpenSetDecision(
             None, None, None, None, None, None, policy.rule, "empty_face_library"

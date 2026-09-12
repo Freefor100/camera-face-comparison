@@ -6,45 +6,77 @@ import numpy as np
 
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.face_engine import FaceObservation
+from camera_face_comparison.face_library import InMemoryFaceLibrary
 from camera_face_comparison.open_set_policy import ScoreThresholdPolicy
-from camera_face_comparison.recognition import RecognitionService, recognize_embedding
+from camera_face_comparison.recognition import RecognitionService
 from camera_face_comparison.repository import FaceRepository, SampleInput
 
 
-def test_mean_prototype_uses_all_reference_embeddings_before_scoring() -> None:
+def _sample_input(
+    embedding: np.ndarray,
+    *,
+    image_path: str,
+) -> SampleInput:
+    """构造人员原型测试使用的样本输入。"""
+
+    return SampleInput(
+        image_path=image_path,
+        embedding=embedding,
+        quality_metrics={},
+        source_type="file",
+    )
+
+
+def test_mean_prototype_uses_all_reference_embeddings_before_scoring(tmp_path) -> None:
     """人员分数必须来自归一化平均原型，而不是最高样本或 Top-K 分数。"""
 
-    decision = recognize_embedding(
-        query_embedding=np.array([1.0, 0.0], dtype=np.float32),
-        embeddings_by_person={
-            "alice": (
-                np.array([1.0, 0.0], dtype=np.float32),
-                np.array([0.10, 0.995], dtype=np.float32),
+    repository = FaceRepository(tmp_path / "face_library.sqlite")
+    repository.create_person_with_samples(
+        person_id="alice",
+        display_name="Alice",
+        samples=[
+            _sample_input(np.array([1.0, 0.0], dtype=np.float32), image_path="faces/alice/1.jpg"),
+            _sample_input(
+                np.array([0.10, 0.995], dtype=np.float32), image_path="faces/alice/2.jpg"
             ),
-            "bob": (
-                np.array([0.91, 0.414], dtype=np.float32),
-                np.array([0.90, 0.436], dtype=np.float32),
-            ),
-        },
-        policy=ScoreThresholdPolicy(minimum_score=0.80),
+        ],
     )
+    repository.create_person_with_samples(
+        person_id="bob",
+        display_name="Bob",
+        samples=[
+            _sample_input(np.array([0.91, 0.414], dtype=np.float32), image_path="faces/bob/1.jpg"),
+            _sample_input(np.array([0.90, 0.436], dtype=np.float32), image_path="faces/bob/2.jpg"),
+        ],
+    )
+    decision = InMemoryFaceLibrary.from_repository(repository).snapshot().search(
+        np.array([1.0, 0.0], dtype=np.float32), ScoreThresholdPolicy(minimum_score=0.80)
+    )
+    repository.close()
 
     assert decision.accepted_person_id == "bob"
     assert decision.rule == "score_threshold"
     assert decision.acceptance_score == decision.top_score
 
 
-def test_frozen_score_rule_does_not_reject_a_close_second_candidate() -> None:
+def test_frozen_score_rule_does_not_reject_a_close_second_candidate(tmp_path) -> None:
     """部署规则只检查最高分，候选分差只用于解释结果。"""
 
-    decision = recognize_embedding(
-        query_embedding=np.array([1.0, 0.0], dtype=np.float32),
-        embeddings_by_person={
-            "alice": (np.array([0.90, 0.43589], dtype=np.float32),),
-            "bob": (np.array([0.89, 0.45596], dtype=np.float32),),
-        },
-        policy=ScoreThresholdPolicy(minimum_score=0.80),
+    repository = FaceRepository(tmp_path / "face_library.sqlite")
+    repository.create_person_with_samples(
+        person_id="alice",
+        display_name="Alice",
+        samples=[_sample_input(np.array([0.90, 0.43589], dtype=np.float32), image_path="faces/alice/1.jpg")],
     )
+    repository.create_person_with_samples(
+        person_id="bob",
+        display_name="Bob",
+        samples=[_sample_input(np.array([0.89, 0.45596], dtype=np.float32), image_path="faces/bob/1.jpg")],
+    )
+    decision = InMemoryFaceLibrary.from_repository(repository).snapshot().search(
+        np.array([1.0, 0.0], dtype=np.float32), ScoreThresholdPolicy(minimum_score=0.80)
+    )
+    repository.close()
 
     assert decision.accepted_person_id == "alice"
     assert decision.score_gap is not None and decision.score_gap < 0.02
@@ -67,6 +99,7 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
         "Bob",
         [np.array([0.2, 0.98], dtype=np.float32)],
     )
+    library = InMemoryFaceLibrary.from_repository(repository)
 
     class ProbeEngine:
         """返回低质量指标但 embedding 有效的 Alice 特征。"""
@@ -82,7 +115,7 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
                 landmarks=None,
             )
 
-    result = RecognitionService(repository, settings, ProbeEngine()).compare(
+    result = RecognitionService(repository, settings, ProbeEngine(), library.snapshot()).compare(
         np.full((80, 80, 3), 5, dtype=np.uint8)
     )
     repository.close()
@@ -96,6 +129,51 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
     assert "move_closer" in result.quality_warnings
     assert "hold_still" in result.quality_warnings
     assert "increase_lighting" in result.quality_warnings
+
+
+def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, monkeypatch) -> None:
+    """识别查询应只使用启动时传入的快照，不在热路径读取 SQLite 样本。"""
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    _create_person(
+        repository,
+        settings,
+        "Alice",
+        [np.array([1.0, 0.0], dtype=np.float32)],
+    )
+    library = InMemoryFaceLibrary.from_repository(repository)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("recognition query must not read the repository gallery")
+
+    monkeypatch.setattr(repository, "list_samples", fail)
+    monkeypatch.setattr(repository, "list_people", fail)
+
+    class ProbeEngine:
+        """返回 Alice 特征的最小测试引擎。"""
+
+        def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+            """返回一张有效单脸观察。"""
+
+            return FaceObservation(
+                bbox=(0.0, 0.0, 64.0, 64.0),
+                detection_score=0.95,
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                blur_variance=100.0,
+                landmarks=None,
+            )
+
+    result = RecognitionService(
+        repository,
+        settings,
+        ProbeEngine(),
+        library.snapshot(),
+    ).compare(np.zeros((80, 80, 3), dtype=np.uint8))
+    repository.close()
+
+    assert result.status == "matched"
+    assert result.person_id == "alice"
 
 
 def _create_person(
