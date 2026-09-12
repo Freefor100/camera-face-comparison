@@ -207,6 +207,7 @@ def test_integrity_failure_disables_library_actions_until_manual_recheck_succeed
     assert window._face_library.snapshot().person_ids == ()
     assert not window.add_person_from_files_button.isEnabled()
     assert not window.append_local_button.isEnabled()
+    assert window.recheck_library_button.isEnabled()
     assert "异常" in window.integrity_label.text()
 
     state["valid"] = True
