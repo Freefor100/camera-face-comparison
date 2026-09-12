@@ -129,13 +129,18 @@ def main() -> int:
 
     probes = _read_probe_paths(protocol)
     probe_embeddings = _load_embeddings(cache_path, dataset_id, extraction_id, probes)
-    probe_paths = _select_probe_paths(probe_embeddings, args.query_count, args.seed)
+    probe_paths = _select_probe_paths(
+        probe_embeddings,
+        min(len(probe_embeddings), max(args.query_count * 5, args.query_count)),
+        args.seed,
+    )
     prepared_probes, input_report, backend = _prepare_probes(
         paths=probe_paths,
         probe_embeddings=probe_embeddings,
         data_dir=data_dir,
         lfw_root=lfw_root,
         cached_inputs=args.cached_inputs,
+        target_count=args.query_count,
     )
     if len(prepared_probes) != args.query_count:
         raise RuntimeError(
@@ -247,13 +252,17 @@ def main() -> int:
                 "optimized_e2e_p95_ms": optimized["e2e"]["p95_ms"],
                 "baseline_amortized_e2e_p50_ms": baseline["amortized_e2e"]["p50_ms"],
                 "optimized_amortized_e2e_p50_ms": optimized["amortized_e2e"]["p50_ms"],
+                "baseline_amortized_e2e_p95_ms": baseline["amortized_e2e"]["p95_ms"],
+                "optimized_amortized_e2e_p95_ms": optimized["amortized_e2e"]["p95_ms"],
                 "baseline_workload_total_ms": baseline["workload_total_ms"],
                 "optimized_workload_total_ms": optimized["workload_total_ms"],
                 "p50_speedup": baseline["e2e"]["p50_ms"] / optimized["e2e"]["p50_ms"],
                 "per_query_e2e_latency_decreased": optimized["e2e"]["p50_ms"]
                 < baseline["e2e"]["p50_ms"],
                 "amortized_e2e_latency_decreased": optimized["amortized_e2e"]["p50_ms"]
-                < baseline["amortized_e2e"]["p50_ms"],
+                < baseline["amortized_e2e"]["p50_ms"]
+                and optimized["amortized_e2e"]["p95_ms"]
+                < baseline["amortized_e2e"]["p95_ms"],
                 "workload_total_decreased": optimized["workload_total_ms"]
                 < baseline["workload_total_ms"],
             }
@@ -545,6 +554,7 @@ def _prepare_probes(
     data_dir: Path,
     lfw_root: Path,
     cached_inputs: bool,
+    target_count: int,
 ) -> tuple[list[PreparedProbe], dict[str, Any], dict[str, Any]]:
     """准备固定待识别图片，默认真实执行 FaceEngine 并记录实际后端。"""
 
@@ -589,12 +599,14 @@ def _prepare_probes(
                     quality_measurement_ms=quality_ms,
                 )
             )
+            if len(prepared) == target_count:
+                break
         except (FaceInputError, OSError, RuntimeError, ValueError, KeyError) as error:
             rejected.append({"relative_path": relative_path, "reason": str(error)})
     return (
         prepared,
         {
-            "requested_count": len(paths),
+            "candidate_count": len(paths),
             "prepared_count": len(prepared),
             "rejected": rejected,
             "mean_image_read_ms": _mean([row.image_read_ms for row in prepared]),
