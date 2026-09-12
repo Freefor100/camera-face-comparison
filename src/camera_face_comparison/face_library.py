@@ -71,6 +71,12 @@ class InMemoryFaceLibrary:
         self._snapshot = snapshot
 
     @classmethod
+    def empty(cls) -> InMemoryFaceLibrary:
+        """创建空的内存标准库，用于完整性检查尚未通过的启动阶段。"""
+
+        return cls(_snapshot_from_entries((), revision=0))
+
+    @classmethod
     def from_repository(cls, repository: FaceRepository) -> InMemoryFaceLibrary:
         """读取仓库中的全部样本并构建初始人员原型矩阵。"""
 

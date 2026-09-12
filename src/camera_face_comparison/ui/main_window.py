@@ -149,7 +149,8 @@ class MainWindow(QMainWindow):
         self._face_engine = face_engine
         self._camera = camera
         self._repository = FaceRepository(settings.database_path)
-        self._face_library = InMemoryFaceLibrary.from_repository(self._repository)
+        self._face_library = InMemoryFaceLibrary.empty()
+        self._library_valid = False
         self._camera_worker: CameraWorker | None = None
         self._recognition_worker: RecognitionWorker | None = None
         self._current_frame: np.ndarray | None = None
@@ -161,7 +162,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._build_library_tab(), "标准人脸库")
         self.setCentralWidget(tabs)
         self.refresh_cameras()
-        self.refresh_people()
+        self.recheck_library()
 
     def _build_recognition_tab(self) -> QWidget:
         """构造摄像头选择、预览、抓拍比对和结果展示页面。"""
@@ -236,10 +237,12 @@ class MainWindow(QMainWindow):
         self.add_person_button = QPushButton("从当前画面新增人员")
         self.append_local_button = QPushButton("为选中人员导入图片")
         self.append_sample_button = QPushButton("为选中人员添加当前画面")
+        self.recheck_library_button = QPushButton("重新检查标准库")
         self.add_person_from_files_button.clicked.connect(self.add_person_from_files)
         self.add_person_button.clicked.connect(self.add_person_from_current_frame)
         self.append_local_button.clicked.connect(self.append_local_images_to_selected_person)
         self.append_sample_button.clicked.connect(self.append_sample_to_selected_person)
+        self.recheck_library_button.clicked.connect(self.recheck_library)
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(self.people_list, 1)
@@ -247,6 +250,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.add_person_button)
         layout.addWidget(self.append_local_button)
         layout.addWidget(self.append_sample_button)
+        layout.addWidget(self.recheck_library_button)
         return page
 
     def refresh_cameras(self) -> None:
@@ -280,7 +284,7 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
-        self.compare_button.setEnabled(True)
+        self.compare_button.setEnabled(self._library_valid)
 
     def stop_camera(self) -> None:
         """停止预览、释放线程和设备，并清除最后一帧画面及检测框。"""
@@ -399,8 +403,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "新增人员失败", str(error))
             return
-        self._face_library.rebuild(self._repository)
-        self.refresh_people()
+        self.recheck_library()
         self.status_label.setText(self._enrollment_message(person))
 
     def add_person_from_current_frame(self) -> None:
@@ -419,8 +422,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "新增人员失败", str(error))
             return
-        self._face_library.rebuild(self._repository)
-        self.refresh_people()
+        self.recheck_library()
         self.status_label.setText(self._enrollment_message(person))
 
     def append_local_images_to_selected_person(self) -> None:
@@ -436,8 +438,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "追加样本失败", str(error))
             return
-        self._face_library.refresh_person(self._repository, person_id)
-        self.refresh_people()
+        self.recheck_library()
         self.status_label.setText(f"已追加 {count} 张有效单人脸图片。")
 
     def append_sample_to_selected_person(self) -> None:
@@ -456,8 +457,7 @@ class MainWindow(QMainWindow):
         except (FaceInputError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "追加样本失败", str(error))
             return
-        self._face_library.refresh_person(self._repository, person_id)
-        self.refresh_people()
+        self.recheck_library()
         self.status_label.setText("已为选中人员追加一张有效单人脸图片。")
 
     def _enrollment_service(self) -> EnrollmentService:
@@ -502,7 +502,7 @@ class MainWindow(QMainWindow):
         return f"{person.display_name} 已录入，可以参与识别。"
 
     def refresh_people(self) -> None:
-        """刷新人员及样本数量，并更新标准库完整性状态。"""
+        """刷新人员及样本数量，不触发完整性检查。"""
         people = self._repository.list_people()
         counts: dict[str, int] = {}
         for sample in self._repository.list_samples():
@@ -513,17 +513,62 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(f"{person.display_name}\n{sample_count} 张样本")
             item.setData(Qt.UserRole, person.id)
             self.people_list.addItem(item)
-        report = verify_library(self._repository, self._settings)
+
+    def recheck_library(self) -> None:
+        """执行一次标准库完整性检查，并按结果清空或重建内存矩阵。"""
+
+        try:
+            report = verify_library(self._repository, self._settings)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            self._face_library.clear()
+            self._library_valid = False
+            self._set_integrity_label(f"检查失败：{error}", warning=True)
+            self._set_library_actions_enabled(False)
+            self.refresh_people()
+            return
         if report.is_valid:
-            self.integrity_label.setText("标准库完整性：正常")
-            self.integrity_label.setProperty("state", "ok")
+            try:
+                self._face_library.rebuild(self._repository)
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
+                self._face_library.clear()
+                self._library_valid = False
+                self._set_integrity_label(f"重建失败：{error}", warning=True)
+                self._set_library_actions_enabled(False)
+                self.refresh_people()
+                return
+            self._library_valid = True
+            self._set_integrity_label("标准库完整性：正常", warning=False)
+            self._set_library_actions_enabled(True)
         else:
-            self.integrity_label.setText(
-                f"标准库完整性：异常（{report.failures[0].kind}）"
+            self._face_library.clear()
+            self._library_valid = False
+            first_failure = report.failures[0]
+            self._set_integrity_label(
+                f"标准库完整性：异常（{first_failure.kind}）", warning=True
             )
-            self.integrity_label.setProperty("state", "warning")
+            self._set_library_actions_enabled(False)
+        self.refresh_people()
+
+    def _set_integrity_label(self, text: str, *, warning: bool) -> None:
+        """更新完整性状态文本及其样式属性。"""
+
+        self.integrity_label.setText(text)
+        self.integrity_label.setProperty("state", "warning" if warning else "ok")
         self.integrity_label.style().unpolish(self.integrity_label)
         self.integrity_label.style().polish(self.integrity_label)
+
+    def _set_library_actions_enabled(self, enabled: bool) -> None:
+        """根据标准库可信状态启用或禁用识别和录入操作。"""
+
+        for button in (
+            self.import_compare_button,
+            self.add_person_from_files_button,
+            self.add_person_button,
+            self.append_local_button,
+            self.append_sample_button,
+        ):
+            button.setEnabled(enabled)
+        self.compare_button.setEnabled(enabled and self._camera_worker is not None)
 
     def _render_frame(
         self,

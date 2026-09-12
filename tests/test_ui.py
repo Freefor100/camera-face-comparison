@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from uuid import uuid4
 
@@ -12,7 +13,9 @@ from PySide6.QtWidgets import QApplication
 from camera_face_comparison.camera import CameraDevice
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.domain import RecognitionResult
+from camera_face_comparison.integrity import IntegrityFailure, LibraryVerificationReport
 from camera_face_comparison.repository import FaceRepository, SampleInput
+from camera_face_comparison.ui import main_window as main_window_module
 from camera_face_comparison.ui.main_window import MainWindow
 
 
@@ -53,16 +56,20 @@ def qapplication() -> QApplication:
 def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplication) -> None:
     """主窗口应显示标准库，并在启动/停止预览时更新控件状态。"""
     settings = load_settings(tmp_path)
+    image_path = settings.faces_dir / "alice" / "sample.jpg"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.write_bytes(b"valid sample")
     repository = FaceRepository(settings.database_path)
     person = repository.create_person_with_samples(
         person_id=str(uuid4()),
         display_name="Alice",
         samples=[
             SampleInput(
-                image_path="faces/alice/sample.jpg",
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
-                quality_metrics={"face_size_px": 160.0},
-            )
+                    image_path="faces/alice/sample.jpg",
+                    embedding=np.array([1.0, 0.0], dtype=np.float32),
+                    quality_metrics={"face_size_px": 160.0},
+                    image_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
+                )
         ],
     )
     repository.close()
@@ -149,4 +156,60 @@ def test_recognition_result_shows_score_gap(tmp_path, qapplication) -> None:
     assert "相似度 0.720" in window.result_label.text()
     assert "候选分差 0.110" in window.result_label.text()
     assert "18 ms" in window.status_label.text()
+    window.close()
+
+
+def test_integrity_failure_disables_library_actions_until_manual_recheck_succeeds(
+    tmp_path, qapplication, monkeypatch
+) -> None:
+    """标准库异常时应清空检索矩阵，手动复查恢复后再启用操作。"""
+
+    settings = load_settings(tmp_path)
+    image_path = settings.faces_dir / "alice" / "sample.jpg"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.write_bytes(b"valid sample")
+    repository = FaceRepository(settings.database_path)
+    repository.create_person_with_samples(
+        person_id="alice",
+        display_name="Alice",
+        samples=[
+            SampleInput(
+                image_path="faces/alice/sample.jpg",
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                quality_metrics={},
+                image_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
+            )
+        ],
+    )
+    repository.close()
+
+    failed = LibraryVerificationReport(
+        (IntegrityFailure("image_hash_mismatch", "sample"),)
+    )
+    state = {"valid": False}
+
+    def fake_verify(repository, settings):
+        """按测试状态返回异常或正常的完整性报告。"""
+
+        return LibraryVerificationReport(()) if state["valid"] else failed
+
+    monkeypatch.setattr(main_window_module, "verify_library", fake_verify)
+    window = MainWindow(
+        settings=settings,
+        face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
+        camera=FakeCamera(),  # type: ignore[arg-type]
+    )
+
+    assert window._face_library.snapshot().person_ids == ()
+    assert not window.add_person_from_files_button.isEnabled()
+    assert not window.append_local_button.isEnabled()
+    assert "异常" in window.integrity_label.text()
+
+    state["valid"] = True
+    window.recheck_library()
+
+    assert window._face_library.snapshot().person_ids == ("alice",)
+    assert window.add_person_from_files_button.isEnabled()
+    assert window.append_local_button.isEnabled()
+    assert "正常" in window.integrity_label.text()
     window.close()
