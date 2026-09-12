@@ -16,7 +16,11 @@ from camera_face_comparison.domain import RecognitionResult
 from camera_face_comparison.integrity import IntegrityFailure, LibraryVerificationReport
 from camera_face_comparison.repository import FaceRepository, SampleInput
 from camera_face_comparison.ui import main_window as main_window_module
-from camera_face_comparison.ui.main_window import MainWindow
+from camera_face_comparison.ui.main_window import (
+    CAMERA_FRAME_COUNT,
+    CAMERA_FRAME_INTERVAL_MS,
+    MainWindow,
+)
 
 
 class FakeCamera:
@@ -212,4 +216,30 @@ def test_integrity_failure_disables_library_actions_until_manual_recheck_succeed
     assert window.add_person_from_files_button.isEnabled()
     assert window.append_local_button.isEnabled()
     assert "正常" in window.integrity_label.text()
+    window.close()
+
+
+def test_camera_recognition_collects_fixed_five_frame_window(tmp_path, qapplication, monkeypatch) -> None:
+    """摄像头识别应使用固定五帧窗口和 80 毫秒相邻间隔。"""
+
+    settings = load_settings(tmp_path)
+    window = MainWindow(
+        settings=settings,
+        face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
+        camera=FakeCamera(),  # type: ignore[arg-type]
+    )
+    window.on_frame(np.zeros((120, 160, 3), dtype=np.uint8))
+    captured: list[tuple] = []
+    monkeypatch.setattr(window, "_start_recognition", lambda inputs: captured.append(inputs))
+
+    window.compare_current_frame()
+    assert window._capture_timer is not None
+    assert window._capture_timer.interval() == CAMERA_FRAME_INTERVAL_MS
+    for value in range(CAMERA_FRAME_COUNT - 1):
+        window.on_frame(np.full((120, 160, 3), value + 1, dtype=np.uint8))
+        window._collect_next_frame()
+
+    assert len(captured) == 1
+    assert len(captured[0]) == CAMERA_FRAME_COUNT
+    assert window._capture_timer is None
     window.close()

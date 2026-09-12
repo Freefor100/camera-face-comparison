@@ -49,3 +49,7 @@ class RecognitionResult:
     bbox: tuple[float, float, float, float] | None
     quality_metrics: dict[str, float]
     quality_warnings: tuple[str, ...]
+    frame_count: int = 1
+    valid_frame_count: int = 1
+    selected_frame_index: int | None = None
+    selected_method: str | None = None

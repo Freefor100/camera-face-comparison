@@ -5,8 +5,9 @@ import hashlib
 import numpy as np
 
 from camera_face_comparison.config import load_settings
-from camera_face_comparison.face_engine import FaceObservation
+from camera_face_comparison.face_engine import FaceInputError, FaceObservation
 from camera_face_comparison.face_library import InMemoryFaceLibrary
+from camera_face_comparison.image_input import ImageInput
 from camera_face_comparison.open_set_policy import ScoreThresholdPolicy
 from camera_face_comparison.recognition import RecognitionService
 from camera_face_comparison.repository import FaceRepository, SampleInput
@@ -174,6 +175,55 @@ def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, mon
 
     assert result.status == "matched"
     assert result.person_id == "alice"
+
+
+def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_frames(tmp_path) -> None:
+    """多帧识别应跳过无效帧，并用清晰度最高的有效帧完成一次判定。"""
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    _create_person(
+        repository,
+        settings,
+        "Alice",
+        [np.array([1.0, 0.0], dtype=np.float32)],
+    )
+    library = InMemoryFaceLibrary.from_repository(repository)
+
+    class BurstEngine:
+        """根据帧像素返回不同清晰度的 Alice 观察。"""
+
+        def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
+            """第二帧模拟检测失败，其余帧返回有效特征。"""
+
+            if int(frame[0, 0, 0]) == 1:
+                raise FaceInputError("multiple_faces")
+            return FaceObservation(
+                bbox=(0.0, 0.0, 64.0, 64.0),
+                detection_score=0.95,
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                blur_variance=float(frame[0, 0, 0] * 10 + 10),
+                landmarks=None,
+            )
+
+    inputs = [
+        ImageInput.from_camera(np.full((80, 80, 3), value, dtype=np.uint8))
+        for value in range(5)
+    ]
+    result = RecognitionService(
+        repository,
+        settings,
+        BurstEngine(),
+        library.snapshot(),
+    ).compare_inputs(inputs)
+    repository.close()
+
+    assert result.status == "matched"
+    assert result.person_id == "alice"
+    assert result.frame_count == 5
+    assert result.valid_frame_count == 4
+    assert result.selected_frame_index == 4
+    assert result.selected_method == "sharpest_frame"
 
 
 def _create_person(

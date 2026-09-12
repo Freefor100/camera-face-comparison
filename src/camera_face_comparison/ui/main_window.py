@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -26,12 +26,15 @@ from ..camera import CameraService
 from ..config import Settings
 from ..domain import Person, RecognitionResult
 from ..enrollment import EnrollmentService
-from ..face_engine import FaceEngine, FaceInputError
+from ..face_engine import FaceEngine
 from ..face_library import FaceLibrarySnapshot, InMemoryFaceLibrary
 from ..image_input import ImageInput
 from ..integrity import verify_library
 from ..recognition import RecognitionService
 from ..repository import FaceRepository
+
+CAMERA_FRAME_COUNT = 5
+CAMERA_FRAME_INTERVAL_MS = 80
 
 
 class CameraWorker(QThread):
@@ -84,7 +87,7 @@ class RecognitionWorker(QThread):
         database_path: Path,
         settings: Settings,
         face_engine: FaceEngine,
-        image_input: ImageInput,
+        image_inputs: tuple[ImageInput, ...],
         library_snapshot: FaceLibrarySnapshot,
     ) -> None:
         """创建一次识别任务。
@@ -93,14 +96,14 @@ class RecognitionWorker(QThread):
             database_path：标准库 SQLite 文件路径。
             settings：当前运行配置。
             face_engine：人脸检测和特征提取引擎。
-            image_input：待识别的独立图片输入。
+            image_inputs：按采集顺序排列的待识别图片输入；本地图片只有一项。
             library_snapshot：本次任务使用的不可变标准库快照。
         """
         super().__init__()
         self._database_path = database_path
         self._settings = settings
         self._face_engine = face_engine
-        self._image_input = image_input
+        self._image_inputs = image_inputs
         self._library_snapshot = library_snapshot
 
     def run(self) -> None:
@@ -108,14 +111,76 @@ class RecognitionWorker(QThread):
         repository: FaceRepository | None = None
         try:
             repository = FaceRepository(self._database_path)
-            result = RecognitionService(
+            service = RecognitionService(
                 repository,
                 self._settings,
                 self._face_engine,
                 self._library_snapshot,
-            ).compare_input(self._image_input)
+            )
+            result = (
+                service.compare_input(self._image_inputs[0])
+                if len(self._image_inputs) == 1
+                else service.compare_inputs(self._image_inputs)
+            )
             self.result_ready.emit(result)
         except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
+            self.worker_error.emit(str(error))
+        finally:
+            if repository is not None:
+                repository.close()
+
+
+class EnrollmentWorker(QThread):
+    """在独立短线程中完成图片特征提取和标准库写入。"""
+
+    result_ready = Signal(object)
+    worker_error = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        database_path: Path,
+        settings: Settings,
+        face_engine: FaceEngine,
+        operation: str,
+        image_inputs: tuple[ImageInput, ...],
+        display_name: str | None = None,
+        person_id: str | None = None,
+    ) -> None:
+        """创建一次新增或追加样本任务。"""
+        super().__init__()
+        self._database_path = database_path
+        self._settings = settings
+        self._face_engine = face_engine
+        self._operation = operation
+        self._image_inputs = image_inputs
+        self._display_name = display_name
+        self._person_id = person_id
+
+    def run(self) -> None:
+        """在线程中执行录入服务，并在结束时关闭独立数据库连接。"""
+        repository: FaceRepository | None = None
+        try:
+            repository = FaceRepository(self._database_path)
+            service = EnrollmentService(
+                repository=repository,
+                settings=self._settings,
+                face_engine=self._face_engine,
+                image_saver=_save_bgr_image,
+            )
+            if self._operation == "create":
+                if self._display_name is None:
+                    raise ValueError("display name is required for person creation")
+                person = service.create_from_inputs(self._display_name, self._image_inputs)
+                self.result_ready.emit((self._operation, person))
+            elif self._operation == "append":
+                if self._person_id is None:
+                    raise ValueError("person id is required for sample append")
+                count = service.append_from_inputs(self._person_id, self._image_inputs)
+                self.result_ready.emit((self._operation, self._person_id, count))
+            else:
+                raise ValueError(f"unknown enrollment operation: {self._operation}")
+        except Exception as error:  # noqa: BLE001 - 录入异常必须反馈给界面
             self.worker_error.emit(str(error))
         finally:
             if repository is not None:
@@ -151,8 +216,13 @@ class MainWindow(QMainWindow):
         self._repository = FaceRepository(settings.database_path)
         self._face_library = InMemoryFaceLibrary.empty()
         self._library_valid = False
+        self._busy = False
         self._camera_worker: CameraWorker | None = None
         self._recognition_worker: RecognitionWorker | None = None
+        self._enrollment_worker: EnrollmentWorker | None = None
+        self._capture_timer: QTimer | None = None
+        self._captured_frames: list[np.ndarray] = []
+        self._recognition_frames: tuple[ImageInput, ...] = ()
         self._current_frame: np.ndarray | None = None
         self._display_frame: np.ndarray | None = None
         self._last_bbox: tuple[float, float, float, float] | None = None
@@ -206,12 +276,17 @@ class MainWindow(QMainWindow):
         result_card = QFrame()
         result_card.setObjectName("resultCard")
         result_layout = QVBoxLayout(result_card)
+        self.result_preview_label = QLabel("等待抓拍画面")
+        self.result_preview_label.setObjectName("resultPreviewSurface")
+        self.result_preview_label.setAlignment(Qt.AlignCenter)
+        self.result_preview_label.setMinimumSize(320, 220)
         self.result_label = QLabel("等待输入图片")
         self.result_label.setObjectName("resultTitle")
         self.status_label = QLabel("状态：未启动")
         self.status_label.setObjectName("statusText")
         self.integrity_label = QLabel()
         self.integrity_label.setObjectName("integrityText")
+        result_layout.addWidget(self.result_preview_label)
         result_layout.addWidget(self.result_label)
         result_layout.addWidget(self.status_label)
         result_layout.addWidget(self.integrity_label)
@@ -288,6 +363,7 @@ class MainWindow(QMainWindow):
 
     def stop_camera(self) -> None:
         """停止预览、释放线程和设备，并清除最后一帧画面及检测框。"""
+        self._cancel_frame_capture()
         if self._camera_worker is not None:
             self._camera_worker.stop()
             self._camera_worker.wait(2000)
@@ -306,15 +382,51 @@ class MainWindow(QMainWindow):
     def on_frame(self, frame: np.ndarray) -> None:
         """接收后台线程的一帧画面，复制后更新预览缓存。"""
         self._current_frame = frame.copy()
-        self._display_frame = self._current_frame
-        self._render_frame(self._display_frame, self._last_bbox)
+        self._render_frame(self._current_frame, None)
 
     def compare_current_frame(self) -> None:
-        """复制当前摄像头帧并异步提交一次识别任务。"""
+        """点击后按固定 80 毫秒间隔采集五帧，再异步提交识别任务。"""
         if self._current_frame is None:
             self.status_label.setText("尚未获得摄像头画面。")
             return
-        self._start_recognition(ImageInput.from_camera(self._current_frame))
+        if self._busy:
+            self.status_label.setText("上一项任务仍在处理，请稍候。")
+            return
+        self._captured_frames = [self._current_frame.copy()]
+        self._busy = True
+        self._set_task_buttons_enabled(False)
+        self.status_label.setText(f"正在采集 1/{CAMERA_FRAME_COUNT} 帧…")
+        self._capture_timer = QTimer(self)
+        self._capture_timer.setInterval(CAMERA_FRAME_INTERVAL_MS)
+        self._capture_timer.timeout.connect(self._collect_next_frame)
+        self._capture_timer.start()
+
+    def _collect_next_frame(self) -> None:
+        """收集一帧最新摄像头画面，五帧齐全后启动识别线程。"""
+
+        if self._current_frame is not None:
+            self._captured_frames.append(self._current_frame.copy())
+        self.status_label.setText(
+            f"正在采集 {len(self._captured_frames)}/{CAMERA_FRAME_COUNT} 帧…"
+        )
+        if len(self._captured_frames) < CAMERA_FRAME_COUNT:
+            return
+        self._cancel_frame_capture(restore_buttons=False)
+        self._start_recognition(
+            tuple(ImageInput.from_camera(frame) for frame in self._captured_frames)
+        )
+
+    def _cancel_frame_capture(self, *, restore_buttons: bool = True) -> None:
+        """停止未完成的多帧采集，并按需要恢复操作按钮。"""
+
+        if self._capture_timer is not None:
+            self._capture_timer.stop()
+            self._capture_timer.deleteLater()
+            self._capture_timer = None
+        if self._captured_frames and restore_buttons:
+            self._captured_frames = []
+            self._busy = False
+            self._set_task_buttons_enabled(self._library_valid)
 
     def compare_local_image(self) -> None:
         """从文件选择器读取一张本地图片并异步提交识别任务。"""
@@ -328,21 +440,23 @@ class MainWindow(QMainWindow):
             return
         self._display_frame = image_input.frame.copy()
         self._last_bbox = None
-        self._render_frame(self._display_frame, None)
-        self._start_recognition(image_input)
+        self._render_frame(self._display_frame, None, target=self.result_preview_label)
+        self._start_recognition((image_input,))
 
-    def _start_recognition(self, image_input: ImageInput) -> None:
+    def _start_recognition(self, image_inputs: tuple[ImageInput, ...]) -> None:
         """创建并启动识别线程，避免模型推理阻塞主界面。"""
         if self._recognition_worker is not None and self._recognition_worker.isRunning():
             self.status_label.setText("上一张图片仍在比对，请稍候。")
             return
-        self.compare_button.setEnabled(False)
+        self._busy = True
+        self._recognition_frames = image_inputs
+        self._set_task_buttons_enabled(False)
         self.status_label.setText("正在进行人脸检测与开放集比对…")
         self._recognition_worker = RecognitionWorker(
             database_path=self._settings.database_path,
             settings=self._settings,
             face_engine=self._face_engine,
-            image_input=image_input,
+            image_inputs=image_inputs,
             library_snapshot=self._face_library.snapshot(),
         )
         self._recognition_worker.result_ready.connect(self.on_recognition_result)
@@ -351,7 +465,12 @@ class MainWindow(QMainWindow):
         self._recognition_worker.start()
 
     def on_recognition_result(self, result: RecognitionResult) -> None:
-        """把服务结果转换为识别标签、耗时和检测框展示。"""
+        """把服务结果转换为识别标签、抓拍画面和检测框展示。"""
+        if self._recognition_frames:
+            frame_index = result.selected_frame_index
+            if frame_index is None or frame_index >= len(self._recognition_frames):
+                frame_index = 0
+            self._display_frame = self._recognition_frames[frame_index].frame.copy()
         self._last_bbox = result.bbox
         score_gap_text = _format_score_gap(result)
         rule_text = _format_rule(result)
@@ -370,10 +489,15 @@ class MainWindow(QMainWindow):
         warning_text = _format_quality_warnings(result.quality_warnings)
         self.status_label.setText(
             f"本次处理耗时：{result.latency_ms:.0f} ms"
+            f"｜有效帧 {result.valid_frame_count}/{result.frame_count}"
             + ("" if not warning_text else f"｜画面建议：{warning_text}")
         )
         if self._display_frame is not None:
-            self._render_frame(self._display_frame, self._last_bbox)
+            self._render_frame(
+                self._display_frame,
+                self._last_bbox,
+                target=self.result_preview_label,
+            )
 
     def on_recognition_error(self, message: str) -> None:
         """展示识别工作线程抛出的异常信息。"""
@@ -381,9 +505,12 @@ class MainWindow(QMainWindow):
         self.status_label.setText("比对任务异常结束。")
 
     def on_recognition_finished(self) -> None:
-        """识别线程结束后恢复摄像头比对按钮。"""
-        if self._camera_worker is not None:
-            self.compare_button.setEnabled(True)
+        """识别线程结束后恢复可用操作按钮。"""
+        self._busy = False
+        self._captured_frames = []
+        self._recognition_frames = ()
+        self._set_task_buttons_enabled(self._library_valid)
+        self.compare_button.setEnabled(self._library_valid and self._camera_worker is not None)
 
     def on_camera_error(self, message: str) -> None:
         """展示摄像头异常并停止当前预览。"""
@@ -398,13 +525,11 @@ class MainWindow(QMainWindow):
         inputs = self._select_local_inputs()
         if not inputs:
             return
-        try:
-            person = self._enrollment_service().create_from_inputs(name, inputs)
-        except (FaceInputError, RuntimeError, ValueError) as error:
-            QMessageBox.warning(self, "新增人员失败", str(error))
-            return
-        self.recheck_library()
-        self.status_label.setText(self._enrollment_message(person))
+        self._start_enrollment(
+            operation="create",
+            image_inputs=tuple(inputs),
+            display_name=name,
+        )
 
     def add_person_from_current_frame(self) -> None:
         """使用当前摄像头画面创建一个新人员。"""
@@ -414,16 +539,11 @@ class MainWindow(QMainWindow):
         name, accepted = QInputDialog.getText(self, "新增人员", "人员姓名：")
         if not accepted:
             return
-        try:
-            person = self._enrollment_service().create_from_inputs(
-                name,
-                [ImageInput.from_camera(self._current_frame)],
-            )
-        except (FaceInputError, RuntimeError, ValueError) as error:
-            QMessageBox.warning(self, "新增人员失败", str(error))
-            return
-        self.recheck_library()
-        self.status_label.setText(self._enrollment_message(person))
+        self._start_enrollment(
+            operation="create",
+            image_inputs=(ImageInput.from_camera(self._current_frame),),
+            display_name=name,
+        )
 
     def append_local_images_to_selected_person(self) -> None:
         """把用户选中的本地图片追加到当前选中人员。"""
@@ -433,13 +553,11 @@ class MainWindow(QMainWindow):
         inputs = self._select_local_inputs()
         if not inputs:
             return
-        try:
-            count = self._enrollment_service().append_from_inputs(person_id, inputs)
-        except (FaceInputError, RuntimeError, ValueError) as error:
-            QMessageBox.warning(self, "追加样本失败", str(error))
-            return
-        self.recheck_library()
-        self.status_label.setText(f"已追加 {count} 张有效单人脸图片。")
+        self._start_enrollment(
+            operation="append",
+            image_inputs=tuple(inputs),
+            person_id=person_id,
+        )
 
     def append_sample_to_selected_person(self) -> None:
         """把当前摄像头画面追加到当前选中人员。"""
@@ -449,25 +567,63 @@ class MainWindow(QMainWindow):
         person_id = self._selected_person_id()
         if person_id is None:
             return
-        try:
-            self._enrollment_service().append_from_inputs(
-                person_id,
-                [ImageInput.from_camera(self._current_frame)],
-            )
-        except (FaceInputError, RuntimeError, ValueError) as error:
-            QMessageBox.warning(self, "追加样本失败", str(error))
-            return
-        self.recheck_library()
-        self.status_label.setText("已为选中人员追加一张有效单人脸图片。")
+        self._start_enrollment(
+            operation="append",
+            image_inputs=(ImageInput.from_camera(self._current_frame),),
+            person_id=person_id,
+        )
 
-    def _enrollment_service(self) -> EnrollmentService:
-        """根据当前窗口依赖创建标准库录入服务。"""
-        return EnrollmentService(
-            repository=self._repository,
+    def _start_enrollment(
+        self,
+        *,
+        operation: str,
+        image_inputs: tuple[ImageInput, ...],
+        display_name: str | None = None,
+        person_id: str | None = None,
+    ) -> None:
+        """启动独立录入线程，并与识别任务共享忙碌状态。"""
+
+        if self._busy:
+            self.status_label.setText("上一项任务仍在处理，请稍候。")
+            return
+        self._busy = True
+        self._set_task_buttons_enabled(False)
+        self.status_label.setText("正在检测图片并写入标准库…")
+        self._enrollment_worker = EnrollmentWorker(
+            database_path=self._settings.database_path,
             settings=self._settings,
             face_engine=self._face_engine,
-            image_saver=_save_bgr_image,
+            operation=operation,
+            image_inputs=image_inputs,
+            display_name=display_name,
+            person_id=person_id,
         )
+        self._enrollment_worker.result_ready.connect(self.on_enrollment_result)
+        self._enrollment_worker.worker_error.connect(self.on_enrollment_error)
+        self._enrollment_worker.finished.connect(self.on_enrollment_finished)
+        self._enrollment_worker.start()
+
+    def on_enrollment_result(self, payload: object) -> None:
+        """录入线程成功后重新检查数据库并刷新内存标准库。"""
+
+        operation, *values = payload  # type: ignore[misc]
+        self.recheck_library()
+        if operation == "create":
+            person = values[0]
+            self.status_label.setText(self._enrollment_message(person))
+        else:
+            self.status_label.setText(f"已追加 {values[1]} 张有效单人脸图片。")
+
+    def on_enrollment_error(self, message: str) -> None:
+        """展示录入线程抛出的异常信息。"""
+
+        self.status_label.setText(f"录入失败：{message}")
+
+    def on_enrollment_finished(self) -> None:
+        """录入线程结束后恢复当前可用操作。"""
+
+        self._busy = False
+        self._set_task_buttons_enabled(self._library_valid)
 
     def _select_local_image_paths(self, *, multiple: bool) -> list[Path]:
         """打开图片选择器并返回用户选择的路径列表。"""
@@ -560,6 +716,14 @@ class MainWindow(QMainWindow):
     def _set_library_actions_enabled(self, enabled: bool) -> None:
         """根据标准库可信状态启用或禁用识别和录入操作。"""
 
+        self._set_task_buttons_enabled(enabled)
+        self.recheck_library_button.setEnabled(enabled)
+
+    def _set_task_buttons_enabled(self, enabled: bool) -> None:
+        """按标准库状态和当前忙碌状态更新识别、录入按钮。"""
+
+        enabled = enabled and not self._busy
+        self.recheck_library_button.setEnabled(enabled)
         for button in (
             self.import_compare_button,
             self.add_person_from_files_button,
@@ -574,6 +738,8 @@ class MainWindow(QMainWindow):
         self,
         frame: np.ndarray,
         bbox: tuple[float, float, float, float] | None,
+        *,
+        target: QLabel | None = None,
     ) -> None:
         """把 BGR 帧转换成 Qt 图片，并可选绘制检测框。"""
         rgb = np.ascontiguousarray(frame[:, :, ::-1])
@@ -586,13 +752,17 @@ class MainWindow(QMainWindow):
             painter.setPen(QPen(Qt.green, 3))
             painter.drawRect(left, top, right - left, bottom - top)
             painter.end()
-        self.preview_label.setPixmap(
-            pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        label = target or self.preview_label
+        label.setPixmap(
+            pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
 
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        """关闭窗口前停止摄像头并释放数据库连接。"""
+        """关闭窗口前停止采集、等待短任务线程并释放数据库连接。"""
         self.stop_camera()
+        for worker in (self._recognition_worker, self._enrollment_worker):
+            if worker is not None and worker.isRunning():
+                worker.wait(5000)
         self._repository.close()
         event.accept()
 
@@ -688,6 +858,12 @@ QComboBox {
     border: 1px solid #263452;
     border-radius: 12px;
     padding: 4px;
+}
+#resultPreviewSurface {
+    background: #070b17;
+    border: 1px solid #263452;
+    border-radius: 10px;
+    color: #74809a;
 }
 #resultTitle { color: #eef2ff; font-size: 18px; font-weight: 700; }
 #statusText { color: #a8b3c9; }
