@@ -42,6 +42,8 @@
 | QMUL 官方协议 | 全部官方 MAT 标签和目录 | 已核验 | `data/logs/qmul_survface_protocol.json` |
 | QMUL 旧尺寸规则压力预检 | 60,294 张标准库 | 旧 112 px 拒绝条件下无有效标准库；只作为“预筛会掩盖模型覆盖”的历史证据 | `data/logs/cache/qmul_survface.sqlite` |
 | QMUL 全量原始压力实验 | 242,453 张；436 张有效人脸特征向量 | 已完成不使用质量拒绝规则的原始提取；70/3,000 个标准库身份可用，同源待识别图片仅 4 张可评分且第一候选均错误 | `data/experiments/phase5/qmul_*` |
+| 阶段 5C 完整链路性能 | 自然 LFW，3/10/100/1,000/4,588 个身份，每档 30 张待识别图片 | 已完成内存人员平均特征矩阵与旧逐人路径的同条件对照；4,588 人完整链路中位数 566.103→288.430 ms，候选和接受结果一致 | `data/experiments/phase5c/runtime-performance/` |
+| 阶段 5C 多帧鲁棒性 | 阶段 3 已缓存数据；5 类模拟短序列；身份互斥参数选择集/独立验证集 | 已完成单帧、清晰度最高帧、特征最一致帧和有效帧平均特征比较；独立集最差正确接收率 82.86%→100%，未知误接收率未上升，清晰度最高帧已接入摄像头 | `data/experiments/phase5c/multiframe/` |
 
 LFW 阶段 4 原始提取使用实际 `CUDAExecutionProvider`，13,233 张中 13,185 张获得人脸特征向量、48 张人脸特征提取失败。再次读取同一缓存时 13,233 张全部命中且模型推理为 0；聚合或判定参数变化不再触发 InsightFace。
 
@@ -99,7 +101,8 @@ QMUL-SurvFace：
 
 正式结果见 [阶段 5 XQLFW 结果](phase-5-xqlfw-results.md)、
 [阶段 5 QMUL 结果](phase-5-qmul-results.md)和
-[阶段 5B 联合标定结果](phase-5b-cross-quality-results.md)。QMUL 的有效分母极小；历史机械阈值迁移报告只证明发生全拒绝，当前代码只保留原始覆盖提取入口，不把它当作桌面部署评测器。
+[阶段 5B 联合标定结果](phase-5b-cross-quality-results.md)。阶段 5C 的完整链路、多帧和界面验收见
+[阶段 5C 结果](phase-5c-results.md)。QMUL 的有效分母极小；历史机械阈值迁移报告只证明发生全拒绝，当前代码只保留原始覆盖提取入口，不把它当作桌面部署评测器。
 
 阶段 5B 跨质量开放集：
 
