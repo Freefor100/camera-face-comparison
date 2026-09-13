@@ -412,10 +412,11 @@ class MainWindow(QMainWindow):
         self._enrollment_worker.start()
 
     def on_enrollment_result(self, payload: object) -> None:
-        """录入线程成功后重新检查数据库并刷新内存标准库。"""
+        """录入成功后重新检查数据库，并只刷新受影响人员的内存原型。"""
 
         operation, *values = payload  # type: ignore[misc]
-        self.recheck_library()
+        person_id = values[0].id if operation == "create" else values[0]
+        self.recheck_library(refreshed_person_id=person_id)
         if operation == "create":
             person = values[0]
             self.status_label.setText(self._enrollment_message(person))
@@ -477,8 +478,8 @@ class MainWindow(QMainWindow):
         )
         self._recognition_page.library_summary_label.setText(f"{len(people)} 个身份")
 
-    def recheck_library(self) -> None:
-        """执行一次标准库完整性检查，并按结果清空或重建内存矩阵。"""
+    def recheck_library(self, *, refreshed_person_id: str | None = None) -> None:
+        """执行完整性检查；录入成功时只刷新受影响人员，否则重建整个矩阵。"""
 
         try:
             report = verify_library(self._repository, self._settings)
@@ -491,7 +492,10 @@ class MainWindow(QMainWindow):
             return
         if report.is_valid:
             try:
-                self._face_library.rebuild(self._repository)
+                if refreshed_person_id is None:
+                    self._face_library.rebuild(self._repository)
+                else:
+                    self._face_library.refresh_person(self._repository, refreshed_person_id)
             except (OSError, RuntimeError, TypeError, ValueError) as error:
                 self._face_library.clear()
                 self._library_valid = False
