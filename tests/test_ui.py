@@ -162,12 +162,62 @@ def test_recognition_result_uses_separate_fixed_fields(tmp_path, qapplication) -
     page = window._recognition_page
     assert window.result_label.text() == "识别成功"
     assert page.result_name_label.text() == "Alice"
+    assert window.result_label.property("state") == "matched"
     assert page.top_score_label.text() == "0.720"
     assert page.threshold_label.text() == "0.556"
+    assert page.threshold_label.property("role") == "fixed"
     assert page.score_gap_label.text() == "0.110"
     assert page.frame_label.text() == "1 / 1"
     assert page.latency_label.text() == "18 ms"
     assert page.decision_label.text() == "最高相似度达到阈值"
+    metric_captions = {
+        label.text() for label in page.findChildren(QLabel, "metricCaption")
+    }
+    assert "固定阈值" in metric_captions
+    assert "可选帧" in metric_captions
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_state"),
+    [("matched", "matched"), ("unknown", "unknown"), ("invalid", "invalid")],
+)
+def test_recognition_status_exposes_visual_state(
+    tmp_path, qapplication, status, expected_state
+) -> None:
+    """识别成功、未知人员和无效输入应提供不同的视觉状态。"""
+
+    settings = load_settings(tmp_path)
+    window = MainWindow(
+        settings=settings,
+        face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
+        camera=FakeCamera(),  # type: ignore[arg-type]
+    )
+    window.on_recognition_result(
+        RecognitionResult(
+            status=status,
+            person_id="alice" if status == "matched" else None,
+            display_name="Alice" if status == "matched" else None,
+            top_score=0.72 if status != "invalid" else None,
+            second_score=0.61 if status != "invalid" else None,
+            score_gap=0.11 if status != "invalid" else None,
+            acceptance_score=0.72 if status == "matched" else None,
+            acceptance_rule="score_threshold",
+            latency_ms=18.0,
+            reason=None if status == "matched" else "score_below_threshold",
+            bbox=None,
+            quality_metrics={},
+            quality_warnings=(),
+            frame_count=5,
+            valid_frame_count=4,
+        )
+    )
+
+    assert window.result_label.property("state") == expected_state
+    assert window._recognition_page.result_source_label.text() == "摄像头五帧择优"
+    assert window._recognition_page.frame_label.toolTip() == (
+        "通过人脸检测并参与清晰度选择的帧数"
+    )
     window.close()
 
 

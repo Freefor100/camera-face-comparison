@@ -250,6 +250,7 @@ class MainWindow(QMainWindow):
         self._recognition_frames = image_inputs
         self._set_task_buttons_enabled(False)
         self._recognition_page.clear_result_metrics()
+        self._recognition_page.set_result_state("working")
         self.result_label.setText("正在识别")
         self._recognition_page.result_name_label.setText("正在检测并提取人脸特征")
         self.status_label.setText("正在进行人脸检测与开放集比对…")
@@ -273,6 +274,7 @@ class MainWindow(QMainWindow):
                 frame_index = 0
             self._display_frame = self._recognition_frames[frame_index].frame.copy()
         self._last_bbox = result.bbox
+        self._recognition_page.set_result_state(result.status)
         if result.status == "matched":
             self.result_label.setText("识别成功")
             self._recognition_page.result_name_label.setText(result.display_name or "已登记人员")
@@ -297,7 +299,7 @@ class MainWindow(QMainWindow):
             "画面建议：" + (warning_text or "当前输入无需额外调整")
         )
         self._recognition_page.result_source_label.setText(
-            "摄像头多帧" if result.frame_count > 1 else "本地图片"
+            "摄像头五帧择优" if result.frame_count > 1 else "本地图片"
         )
         if self._display_frame is not None:
             self._render_frame(
@@ -309,6 +311,7 @@ class MainWindow(QMainWindow):
     def on_recognition_error(self, message: str) -> None:
         """展示识别工作线程抛出的异常信息。"""
         self._recognition_page.clear_result_metrics()
+        self._recognition_page.set_result_state("invalid")
         self.result_label.setText("比对失败")
         self._recognition_page.result_name_label.setText(message)
         self.status_label.setText("比对任务异常结束。")

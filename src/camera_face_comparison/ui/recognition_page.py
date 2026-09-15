@@ -143,6 +143,7 @@ class RecognitionPage(QWidget):
         result_layout.addWidget(self.result_preview_label, 1)
         self.result_label = QLabel("等待识别")
         self.result_label.setObjectName("resultTitle")
+        self.result_label.setProperty("state", "idle")
         self.result_name_label = QLabel("选择摄像头抓拍或本地图片")
         self.result_name_label.setObjectName("resultName")
         self.result_name_label.setWordWrap(True)
@@ -154,9 +155,12 @@ class RecognitionPage(QWidget):
         metrics.setHorizontalSpacing(18)
         metrics.setVerticalSpacing(10)
         self.top_score_label = self._add_metric(metrics, "最高相似度", 0, 0)
-        self.threshold_label = self._add_metric(metrics, "判定阈值", 0, 1)
+        self.threshold_label = self._add_metric(metrics, "固定阈值", 0, 1)
+        self.threshold_label.setProperty("role", "fixed")
+        self.threshold_label.setToolTip("由跨质量参数选择集标定，最终演示阶段不再调整")
         self.score_gap_label = self._add_metric(metrics, "候选分差", 1, 0)
-        self.frame_label = self._add_metric(metrics, "有效帧", 1, 1)
+        self.frame_label = self._add_metric(metrics, "可选帧", 1, 1)
+        self.frame_label.setToolTip("通过人脸检测并参与清晰度选择的帧数")
         self.latency_label = self._add_metric(metrics, "处理耗时", 2, 0)
         self.decision_label = self._add_metric(metrics, "判定依据", 2, 1)
         self.quality_label = QLabel("画面建议：--")
@@ -207,6 +211,12 @@ class RecognitionPage(QWidget):
             self.decision_label,
         ):
             label.setText("--")
+
+    def set_result_state(self, state: str) -> None:
+        """设置识别结论的语义状态，并立即刷新对应颜色。"""
+        self.result_label.setProperty("state", state)
+        self.result_label.style().unpolish(self.result_label)
+        self.result_label.style().polish(self.result_label)
 
     def set_camera_running(self, running: bool) -> None:
         """更新实时预览区的运行状态文字。"""
