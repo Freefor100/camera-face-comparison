@@ -735,9 +735,9 @@ def _format_quality_warnings(warnings: tuple[str, ...]) -> str:
     """把非阻断质量提示代码转换为简短操作建议。"""
 
     messages = {
-        "low_detection_confidence": "正对镜头",
+        "low_detection_confidence": "请正对镜头并保持面部无遮挡",
         "move_closer": "靠近镜头",
-        "hold_still": "保持稳定",
+        "hold_still": "请改善识别画质",
         "increase_lighting": "增加光线",
         "reduce_lighting": "避免过曝",
         "improve_contrast": "改善光照对比",
