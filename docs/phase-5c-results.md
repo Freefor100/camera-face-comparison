@@ -19,6 +19,8 @@
    处理短时间内的偶发模糊、曝光或距离变化，不代表解决极端低质量人脸。
 6. 识别页和标准库页已拆分为独立页面，使用深色双栏工作区；离屏视觉检查覆盖未启动、识别成功、
    未知人员、标准库异常和人员详情五种状态。
+7. 通过生产 `RecognitionService` 的真实模型回放补齐了服务内部阶段计时；该回放仍不包含真实
+   摄像头设备取帧、Qt 主窗口屏幕合成和 CUDA 实测，三项留给阶段 6 现场复测。
 
 ## 2. 标准库矩阵实现
 
@@ -91,6 +93,42 @@
 - `data/experiments/phase5c/runtime-performance/baseline_report.json`；
 - `data/experiments/phase5c/runtime-performance/optimized_report.json`；
 - `data/experiments/phase5c/runtime-performance/comparison_report.json`。
+
+### 3.4 生产识别服务回放
+
+上一节的完整链路对照为了隔离标准库开销，复用了预先测得的输入阶段耗时。本节改用生产
+`RecognitionService` 直接调用真实 `FaceEngine`，把模型、质量测量、矩阵检索、判定和日志写入
+按一次实际服务调用记录下来。命令为：
+
+```bash
+.venv/bin/python scripts/benchmark_production_runtime.py \
+  --data-dir ./data \
+  --lfw-root ./data/datasets/lfw_funneled \
+  --protocol ./data/experiments/phase4/protocol.json \
+  --cache ./data/logs/cache/lfw_raw.sqlite \
+  --output-dir ./data/experiments/phase5c/production-runtime \
+  --identity-count 4588 --sequence-count 10 --warmup-count 2 --frame-count 5
+```
+
+实验使用 4,588 个标准库身份、10 条同身份图片序列和 2 次预热。当前执行环境的 CUDA 初始化
+失败，ONNX Runtime 自动回退到 `CPUExecutionProvider`，所以以下数字是 CPU 数字，不能当成 CUDA
+性能结论。
+
+| 回放方式 | 读图 p50 | 模型调用累计 p50 | 质量测量 p50 | 清晰度选择 p50 | 矩阵检索 p50 | 判定 p50 | 日志写入 p50 | 服务调用 p50 | 回放总耗时 p50 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 单张本地图片 | 0.427 ms | 319.307 ms | 0.164 ms | 0 | 7.478 ms | 0.023 ms | 15.349 ms | 342.883 ms | 343.359 ms |
+| 五帧图片回放 | 4.965 ms | 1,608.910 ms | 0.641 ms | 0.012 ms | 6.834 ms | 0.019 ms | 15.088 ms | 1,633.031 ms | 1,637.219 ms |
+
+五帧回放若把程序固定的 `4 × 80 ms = 320 ms` 采集窗口计入，中位数为 `1,957.219 ms`。这
+是按固定间隔补加的窗口，不是摄像头驱动实际取帧耗时。单帧回放 10 次中 9 次完成匹配、1 次因
+真实模型检测到多人脸而判为无效；五帧回放 10 次均完成匹配，平均每条有 4 个有效帧。模型加载
+耗时为 `1,302.500 ms`，从缓存构建 4,588 人标准库快照耗时为 `60.089 ms`，均为启动阶段一次性
+成本。
+
+这次回放证明了生产服务的计时接口和多帧路径已经接通，也说明五帧功能会把模型推理成本大致
+放大到五次；它是鲁棒性扩展，不是低延迟优化。完整原始结果见
+`data/experiments/phase5c/production-runtime/report.json` 和 `records.json`。真实摄像头的取帧、
+Qt 工作线程/UI 更新以及用户机器上的 CUDA 速度尚未由本回放覆盖。
 
 ## 4. 多帧识别实验
 
