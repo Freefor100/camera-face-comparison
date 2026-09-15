@@ -353,7 +353,7 @@ def test_integrity_failure_disables_library_actions_until_manual_recheck_succeed
 
 
 def test_camera_recognition_collects_fixed_five_frame_window(tmp_path, qapplication, monkeypatch) -> None:
-    """摄像头识别应使用固定五帧窗口和 80 毫秒相邻间隔。"""
+    """摄像头识别应立即启动流水线，并按80毫秒间隔提交五帧。"""
 
     settings = load_settings(tmp_path)
     window = MainWindow(
@@ -362,17 +362,29 @@ def test_camera_recognition_collects_fixed_five_frame_window(tmp_path, qapplicat
         camera=FakeCamera(),  # type: ignore[arg-type]
     )
     window.on_frame(np.zeros((120, 160, 3), dtype=np.uint8))
-    captured: list[tuple] = []
-    monkeypatch.setattr(window, "_start_recognition", lambda inputs: captured.append(inputs))
+    started: list[tuple[object, float]] = []
+    submitted: list[object] = []
+    monkeypatch.setattr(
+        window,
+        "_start_camera_recognition_stream",
+        lambda first_input, *, started_at: started.append((first_input, started_at)),
+    )
+    monkeypatch.setattr(
+        window,
+        "_submit_camera_recognition_frame",
+        lambda image_input, final=False: submitted.append((image_input, final)),
+    )
 
     window.compare_current_frame()
+    assert len(started) == 1
+    assert started[0][1] > 0.0
     assert window._capture_timer is not None
     assert window._capture_timer.interval() == CAMERA_FRAME_INTERVAL_MS
     for value in range(CAMERA_FRAME_COUNT - 1):
         window.on_frame(np.full((120, 160, 3), value + 1, dtype=np.uint8))
         window._collect_next_frame()
 
-    assert len(captured) == 1
-    assert len(captured[0]) == CAMERA_FRAME_COUNT
+    assert len(submitted) == CAMERA_FRAME_COUNT - 1
+    assert submitted[-1][1] is True
     assert window._capture_timer is None
     window.close()

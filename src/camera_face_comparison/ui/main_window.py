@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
@@ -25,7 +26,12 @@ from ..repository import FaceRepository
 from .library_page import LibraryPage
 from .recognition_page import RecognitionPage
 from .theme import APP_STYLE_SHEET
-from .workers import CameraWorker, EnrollmentWorker, RecognitionWorker
+from .workers import (
+    CameraRecognitionWorker,
+    CameraWorker,
+    EnrollmentWorker,
+    RecognitionWorker,
+)
 
 CAMERA_FRAME_COUNT = 5
 CAMERA_FRAME_INTERVAL_MS = 80
@@ -62,11 +68,11 @@ class MainWindow(QMainWindow):
         self._library_valid = False
         self._busy = False
         self._camera_worker: CameraWorker | None = None
-        self._recognition_worker: RecognitionWorker | None = None
+        self._recognition_worker: RecognitionWorker | CameraRecognitionWorker | None = None
         self._enrollment_worker: EnrollmentWorker | None = None
         self._capture_timer: QTimer | None = None
-        self._captured_frames: list[np.ndarray] = []
-        self._recognition_frames: tuple[ImageInput, ...] = ()
+        self._captured_frames: list[ImageInput] = []
+        self._recognition_frames: list[ImageInput] = []
         self._current_frame: np.ndarray | None = None
         self._display_frame: np.ndarray | None = None
         self._last_bbox: tuple[float, float, float, float] | None = None
@@ -183,17 +189,20 @@ class MainWindow(QMainWindow):
         self._render_frame(self._current_frame, None)
 
     def compare_current_frame(self) -> None:
-        """点击后按固定 80 毫秒间隔采集五帧，再异步提交识别任务。"""
+        """点击后立即启动检测流水线，并按固定间隔继续提交摄像头帧。"""
         if self._current_frame is None:
             self.status_label.setText("尚未获得摄像头画面。")
             return
         if self._busy:
             self.status_label.setText("上一项任务仍在处理，请稍候。")
             return
-        self._captured_frames = [self._current_frame.copy()]
+        request_started_at = perf_counter()
+        first_input = ImageInput.from_camera(self._current_frame)
+        self._captured_frames = [first_input]
         self._busy = True
         self._set_task_buttons_enabled(False)
         self.status_label.setText(f"正在采集 1/{CAMERA_FRAME_COUNT} 帧…")
+        self._start_camera_recognition_stream(first_input, started_at=request_started_at)
         self._capture_timer = QTimer(self)
         self._capture_timer.setInterval(CAMERA_FRAME_INTERVAL_MS)
         self._capture_timer.timeout.connect(self._collect_next_frame)
@@ -203,25 +212,67 @@ class MainWindow(QMainWindow):
         """收集一帧最新摄像头画面，五帧齐全后启动识别线程。"""
 
         if self._current_frame is not None:
-            self._captured_frames.append(self._current_frame.copy())
+            image_input = ImageInput.from_camera(self._current_frame)
+            self._captured_frames.append(image_input)
+            final = len(self._captured_frames) >= CAMERA_FRAME_COUNT
+            self._submit_camera_recognition_frame(image_input, final=final)
         self.status_label.setText(
             f"正在采集 {len(self._captured_frames)}/{CAMERA_FRAME_COUNT} 帧…"
         )
         if len(self._captured_frames) < CAMERA_FRAME_COUNT:
             return
         self._cancel_frame_capture(restore_buttons=False)
-        self._start_recognition(
-            tuple(ImageInput.from_camera(frame) for frame in self._captured_frames)
+
+    def _start_camera_recognition_stream(
+        self,
+        first_input: ImageInput,
+        *,
+        started_at: float,
+    ) -> None:
+        """启动摄像头识别线程，并立即提交第一帧以重叠采集和检测。"""
+
+        self._prepare_recognition_ui([first_input])
+        self._recognition_worker = CameraRecognitionWorker(
+            database_path=self._settings.database_path,
+            settings=self._settings,
+            face_engine=self._face_engine,
+            library_snapshot=self._face_library.snapshot(),
+            frame_count=CAMERA_FRAME_COUNT,
+            started_at=started_at,
         )
+        self._connect_recognition_worker(self._recognition_worker)
+        self._recognition_worker.start()
+        self._recognition_worker.submit(first_input)
+
+    def _submit_camera_recognition_frame(
+        self,
+        image_input: ImageInput,
+        *,
+        final: bool = False,
+    ) -> None:
+        """向摄像头识别流水线提交一帧，并按需要结束输入。"""
+
+        worker = self._recognition_worker
+        if not isinstance(worker, CameraRecognitionWorker):
+            raise TypeError("camera recognition worker is not running")
+        self._recognition_frames.append(image_input)
+        worker.submit(image_input)
+        if final:
+            worker.finish_inputs()
 
     def _cancel_frame_capture(self, *, restore_buttons: bool = True) -> None:
         """停止未完成的多帧采集，并按需要恢复操作按钮。"""
 
+        capture_was_running = self._capture_timer is not None
         if self._capture_timer is not None:
             self._capture_timer.stop()
             self._capture_timer.deleteLater()
             self._capture_timer = None
         if self._captured_frames and restore_buttons:
+            if capture_was_running and isinstance(
+                self._recognition_worker, CameraRecognitionWorker
+            ):
+                self._recognition_worker.cancel()
             self._captured_frames = []
             self._busy = False
             self._set_task_buttons_enabled(self._library_valid)
@@ -246,6 +297,20 @@ class MainWindow(QMainWindow):
         if self._recognition_worker is not None and self._recognition_worker.isRunning():
             self.status_label.setText("上一张图片仍在比对，请稍候。")
             return
+        self._prepare_recognition_ui(list(image_inputs))
+        self._recognition_worker = RecognitionWorker(
+            database_path=self._settings.database_path,
+            settings=self._settings,
+            face_engine=self._face_engine,
+            image_inputs=image_inputs,
+            library_snapshot=self._face_library.snapshot(),
+        )
+        self._connect_recognition_worker(self._recognition_worker)
+        self._recognition_worker.start()
+
+    def _prepare_recognition_ui(self, image_inputs: list[ImageInput]) -> None:
+        """保存结果画面来源并把界面切换为识别中状态。"""
+
         self._busy = True
         self._recognition_frames = image_inputs
         self._set_task_buttons_enabled(False)
@@ -254,17 +319,16 @@ class MainWindow(QMainWindow):
         self.result_label.setText("正在识别")
         self._recognition_page.result_name_label.setText("正在检测并提取人脸特征")
         self.status_label.setText("正在进行人脸检测与开放集比对…")
-        self._recognition_worker = RecognitionWorker(
-            database_path=self._settings.database_path,
-            settings=self._settings,
-            face_engine=self._face_engine,
-            image_inputs=image_inputs,
-            library_snapshot=self._face_library.snapshot(),
-        )
-        self._recognition_worker.result_ready.connect(self.on_recognition_result)
-        self._recognition_worker.worker_error.connect(self.on_recognition_error)
-        self._recognition_worker.finished.connect(self.on_recognition_finished)
-        self._recognition_worker.start()
+
+    def _connect_recognition_worker(
+        self,
+        worker: RecognitionWorker | CameraRecognitionWorker,
+    ) -> None:
+        """连接单帧和流式识别工作线程共用的结果信号。"""
+
+        worker.result_ready.connect(self.on_recognition_result)
+        worker.worker_error.connect(self.on_recognition_error)
+        worker.finished.connect(self.on_recognition_finished)
 
     def on_recognition_result(self, result: RecognitionResult) -> None:
         """把服务结果转换为识别标签、抓拍画面和检测框展示。"""
@@ -320,7 +384,7 @@ class MainWindow(QMainWindow):
         """识别线程结束后恢复可用操作按钮。"""
         self._busy = False
         self._captured_frames = []
-        self._recognition_frames = ()
+        self._recognition_frames = []
         self._set_task_buttons_enabled(self._library_valid)
         self.compare_button.setEnabled(self._library_valid and self._camera_worker is not None)
 

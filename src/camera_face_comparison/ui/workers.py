@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+from queue import Queue
+from threading import Lock
+from time import perf_counter
 
 import numpy as np
 from PySide6.QtCore import QThread, Signal
@@ -13,6 +17,46 @@ from ..face_library import FaceLibrarySnapshot
 from ..image_input import ImageInput
 from ..recognition import RecognitionService
 from ..repository import FaceRepository
+
+
+class RecognitionInputStream:
+    """在线程安全队列中传递陆续到达的摄像头帧。"""
+
+    def __init__(self) -> None:
+        """创建尚未结束的输入流。"""
+
+        self._queue: Queue[ImageInput | object] = Queue()
+        self._end_marker = object()
+        self._finished = False
+        self._lock = Lock()
+
+    def submit(self, image_input: ImageInput) -> None:
+        """提交一张可立即被识别线程消费的独立图片输入。"""
+
+        with self._lock:
+            if self._finished:
+                raise RuntimeError("recognition input stream is already finished")
+            self._queue.put(image_input)
+
+    def finish(self) -> None:
+        """结束输入流并唤醒正在等待下一帧的识别线程。"""
+
+        with self._lock:
+            if self._finished:
+                return
+            self._finished = True
+            self._queue.put(self._end_marker)
+
+    def __iter__(self) -> Iterator[ImageInput]:
+        """按提交顺序阻塞读取图片，直到采集端结束输入。"""
+
+        while True:
+            item = self._queue.get()
+            if item is self._end_marker:
+                return
+            if not isinstance(item, ImageInput):
+                raise TypeError("recognition input stream received an invalid item")
+            yield item
 
 
 class CameraWorker(QThread):
@@ -90,6 +134,77 @@ class RecognitionWorker(QThread):
             self.result_ready.emit(result)
         except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
             self.worker_error.emit(str(error))
+        finally:
+            if repository is not None:
+                repository.close()
+
+
+class CameraRecognitionWorker(QThread):
+    """在摄像头继续采集时逐帧检测，并在输入结束后完成一次识别。"""
+
+    result_ready = Signal(object)
+    worker_error = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        database_path: Path,
+        settings: Settings,
+        face_engine: FaceEngine,
+        library_snapshot: FaceLibrarySnapshot,
+        frame_count: int,
+        started_at: float | None = None,
+    ) -> None:
+        """创建一个接收流式摄像头输入的识别任务。"""
+
+        super().__init__()
+        self._database_path = database_path
+        self._settings = settings
+        self._face_engine = face_engine
+        self._library_snapshot = library_snapshot
+        self._frame_count = frame_count
+        self._started_at = perf_counter() if started_at is None else started_at
+        self._inputs = RecognitionInputStream()
+        self._cancelled = False
+
+    def submit(self, image_input: ImageInput) -> None:
+        """把一张新采集帧提交给已经运行的识别线程。"""
+
+        self._inputs.submit(image_input)
+
+    def finish_inputs(self) -> None:
+        """通知识别线程摄像头采集已经结束。"""
+
+        self._inputs.finish()
+
+    def cancel(self) -> None:
+        """取消尚未完成的采集，保证等待输入的线程可以退出。"""
+
+        self._cancelled = True
+        self._inputs.finish()
+
+    def run(self) -> None:
+        """逐帧消费输入，并只在未取消时发送最终结果。"""
+
+        repository: FaceRepository | None = None
+        try:
+            repository = FaceRepository(self._database_path)
+            service = RecognitionService(
+                repository,
+                self._settings,
+                self._face_engine,
+                self._library_snapshot,
+            )
+            result = service.compare_inputs(
+                self._inputs,
+                frame_count=self._frame_count,
+                started_at=self._started_at,
+            )
+            if not self._cancelled:
+                self.result_ready.emit(result)
+        except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
+            if not self._cancelled:
+                self.worker_error.emit(str(error))
         finally:
             if repository is not None:
                 repository.close()
