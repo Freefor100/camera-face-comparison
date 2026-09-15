@@ -121,7 +121,9 @@ class CameraService:
         if self._platform_name == "Windows":
             return (getattr(self._cv2, "CAP_DSHOW", None), None)
         if self._platform_name == "Linux":
-            return (getattr(self._cv2, "CAP_V4L2", None), None)
+            # Linux 的数字索引在这里专指 /dev/videoN，只允许 V4L2 解释。若 V4L2 拒绝
+            # 元数据节点，继续回退到自动后端可能被 FFmpeg 重新解释成错误的视频输入。
+            return (getattr(self._cv2, "CAP_V4L2", None),)
         if self._platform_name == "Darwin":
             return (getattr(self._cv2, "CAP_AVFOUNDATION", None), None)
         return (None,)
