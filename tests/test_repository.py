@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 import numpy as np
+import pytest
 
 from camera_face_comparison.repository import FaceRepository, SampleInput
 
@@ -94,3 +95,28 @@ def test_repository_persists_sample_provenance_hashes_and_wal_mode(tmp_path) -> 
     assert restored_sample.image_sha256 == "a" * 64
     assert restored_sample.embedding_sha256 == hashlib.sha256(embedding.tobytes()).hexdigest()
     assert journal_mode == "wal"
+
+
+def test_repository_rejects_the_same_image_for_one_person(tmp_path) -> None:
+    """同一人员重复追加内容完全相同的图片时，不得产生重复样本。"""
+
+    repository = FaceRepository(tmp_path / "face_library.sqlite")
+    repository.create_person_with_samples(
+        person_id="alice-id",
+        display_name="Alice",
+        samples=[_sample_input(np.array([1.0, 0.0], dtype=np.float32))],
+    )
+
+    with pytest.raises(ValueError, match="该人员已经包含内容相同的图片"):
+        repository.add_samples(
+            person_id="alice-id",
+            samples=[
+                _sample_input(
+                    np.array([0.8, 0.2], dtype=np.float32),
+                    image_path="faces/alice/repeated.jpg",
+                )
+            ],
+        )
+
+    assert len(repository.list_samples("alice-id")) == 1
+    repository.close()

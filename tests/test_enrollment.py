@@ -43,9 +43,9 @@ class DiverseFakeFaceEngine:
 
 
 def _save_image(path: Path, frame: np.ndarray) -> None:
-    """写入测试图片占位内容，并确保父目录存在。"""
+    """写入由画面内容决定的测试图片，并确保父目录存在。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"test image")
+    path.write_bytes(frame.tobytes())
 
 
 def test_enrollment_rolls_back_when_an_image_cannot_be_saved(tmp_path) -> None:

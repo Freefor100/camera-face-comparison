@@ -26,7 +26,11 @@ def test_execution_backend_uses_cpu_when_cuda_is_unavailable() -> None:
 
 
 class _FakeSession:
+    """提供模型实际执行后端列表的测试会话。"""
+
     def __init__(self, providers: tuple[str, ...]) -> None:
+        """保存当前测试场景声明的执行后端顺序。"""
+
         self._providers = providers
 
     def get_providers(self) -> list[str]:
@@ -35,12 +39,20 @@ class _FakeSession:
 
 
 class _FakeModel:
+    """把测试会话包装为 InsightFace 模型形状。"""
+
     def __init__(self, providers: tuple[str, ...]) -> None:
+        """创建使用指定执行后端的测试模型。"""
+
         self.session = _FakeSession(providers)
 
 
 class _FakeAnalyzer:
+    """提供检测与识别两个模型的分析器替身。"""
+
     def __init__(self, providers: tuple[str, ...]) -> None:
+        """让两个测试模型使用相同的执行后端列表。"""
+
         self.models = {
             "detection": _FakeModel(providers),
             "recognition": _FakeModel(providers),

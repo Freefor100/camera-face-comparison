@@ -134,6 +134,8 @@ def test_face_engine_detection_does_not_run_identity_model() -> None:
         """记录身份特征模型的调用次数。"""
 
         def __init__(self) -> None:
+            """创建调用次数为零的测试识别器。"""
+
             self.calls = 0
 
         def get(self, frame, face):

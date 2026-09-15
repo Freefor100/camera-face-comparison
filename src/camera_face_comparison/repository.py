@@ -334,6 +334,19 @@ class FaceRepository:
 
     def _insert_sample(self, sample: FaceSample) -> None:
         """将一个样本对象写入已存在的 SQLite 事务。"""
+        # 只在同一人员内部排除内容完全相同的图片。同一张图片属于不同人员时不在此层推断业务错误，
+        # 相似但字节不同的照片也必须保留，因为它们可能包含有价值的角度和光照变化。
+        if sample.image_sha256 is not None:
+            repeated = self._connection.execute(
+                """
+                SELECT 1 FROM face_samples
+                WHERE person_id = ? AND image_sha256 = ?
+                LIMIT 1
+                """,
+                (sample.person_id, sample.image_sha256),
+            ).fetchone()
+            if repeated is not None:
+                raise ValueError("该人员已经包含内容相同的图片")
         self._connection.execute(
             """
             INSERT INTO face_samples (

@@ -19,6 +19,8 @@ def test_qmul_protocol_uses_mat_labels_and_unmated_directory(monkeypatch, tmp_pa
     from camera_face_comparison import qmul_survface
 
     def fake_loadmat(path):
+        """按标签文件名返回最小的官方字段结构。"""
+
         if path.name == "gallery_img_ID_pairs.mat":
             return {
                 "gallery_ids": np.array([[7]], dtype=np.uint16),

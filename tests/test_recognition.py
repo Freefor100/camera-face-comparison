@@ -174,6 +174,8 @@ def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, mon
     library = InMemoryFaceLibrary.from_repository(repository)
 
     def fail(*args, **kwargs):
+        """在识别热路径意外读取数据库标准库时立即使测试失败。"""
+
         raise AssertionError("recognition query must not read the repository gallery")
 
     monkeypatch.setattr(repository, "list_samples", fail)
@@ -299,6 +301,8 @@ def test_multiframe_recognition_detects_every_frame_but_extracts_one_embedding(t
         """分开记录检测与身份特征提取次数。"""
 
         def __init__(self) -> None:
+            """创建空的检测帧和身份特征提取帧记录。"""
+
             self.detected_markers: list[int] = []
             self.extracted_markers: list[int] = []
 

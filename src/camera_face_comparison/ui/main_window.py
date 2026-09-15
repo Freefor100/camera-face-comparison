@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         self._capture_timer: QTimer | None = None
         self._captured_frames: list[ImageInput] = []
         self._recognition_frames: list[ImageInput] = []
+        self._recognition_started_at: float | None = None
         self._current_frame: np.ndarray | None = None
         self._display_frame: np.ndarray | None = None
         self._last_bbox: tuple[float, float, float, float] | None = None
@@ -197,6 +198,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText("上一项任务仍在处理，请稍候。")
             return
         request_started_at = perf_counter()
+        self._recognition_started_at = request_started_at
         first_input = ImageInput.from_camera(self._current_frame)
         self._captured_frames = [first_input]
         self._busy = True
@@ -274,8 +276,11 @@ class MainWindow(QMainWindow):
             ):
                 self._recognition_worker.cancel()
             self._captured_frames = []
-            self._busy = False
-            self._set_task_buttons_enabled(self._library_valid)
+            # 识别线程仍可能正在执行已经收到的人脸检测。此时保持忙碌状态，避免录入或下一次识别
+            # 与它并发调用同一个模型；按钮由线程结束信号统一恢复。
+            if not isinstance(self._recognition_worker, CameraRecognitionWorker):
+                self._busy = False
+                self._set_task_buttons_enabled(self._library_valid)
 
     def compare_local_image(self) -> None:
         """从文件选择器读取一张本地图片并异步提交识别任务。"""
@@ -297,6 +302,7 @@ class MainWindow(QMainWindow):
         if self._recognition_worker is not None and self._recognition_worker.isRunning():
             self.status_label.setText("上一张图片仍在比对，请稍候。")
             return
+        self._recognition_started_at = perf_counter()
         self._prepare_recognition_ui(list(image_inputs))
         self._recognition_worker = RecognitionWorker(
             database_path=self._settings.database_path,
@@ -357,7 +363,6 @@ class MainWindow(QMainWindow):
         self._recognition_page.frame_label.setText(
             f"{result.valid_frame_count} / {result.frame_count}"
         )
-        self._recognition_page.latency_label.setText(f"{result.latency_ms:.0f} ms")
         self._recognition_page.decision_label.setText(_format_decision(result))
         self._recognition_page.quality_label.setText(
             "画面建议：" + (warning_text or "当前输入无需额外调整")
@@ -371,6 +376,14 @@ class MainWindow(QMainWindow):
                 self._last_bbox,
                 target=self.result_preview_label,
             )
+        # 服务结果中的耗时用于数据库诊断；界面需要报告用户从启动任务到看到结果区域完成生成的
+        # 时间，因此在所有结果控件和抓拍画面更新后再读取计时器。
+        elapsed_ms = (
+            result.latency_ms
+            if self._recognition_started_at is None
+            else (perf_counter() - self._recognition_started_at) * 1000
+        )
+        self._recognition_page.latency_label.setText(f"{elapsed_ms:.0f} ms")
 
     def on_recognition_error(self, message: str) -> None:
         """展示识别工作线程抛出的异常信息。"""
@@ -379,12 +392,16 @@ class MainWindow(QMainWindow):
         self.result_label.setText("比对失败")
         self._recognition_page.result_name_label.setText(message)
         self.status_label.setText("比对任务异常结束。")
+        if self._recognition_started_at is not None:
+            elapsed_ms = (perf_counter() - self._recognition_started_at) * 1000
+            self._recognition_page.latency_label.setText(f"{elapsed_ms:.0f} ms")
 
     def on_recognition_finished(self) -> None:
         """识别线程结束后恢复可用操作按钮。"""
         self._busy = False
         self._captured_frames = []
         self._recognition_frames = []
+        self._recognition_started_at = None
         self._set_task_buttons_enabled(self._library_valid)
         self.compare_button.setEnabled(self._library_valid and self._camera_worker is not None)
 

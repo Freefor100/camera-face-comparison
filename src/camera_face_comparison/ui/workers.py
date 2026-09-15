@@ -19,6 +19,10 @@ from ..recognition import RecognitionService
 from ..repository import FaceRepository
 
 
+class RecognitionCancelled(RuntimeError):
+    """表示操作者主动取消了尚未完成的摄像头识别。"""
+
+
 class RecognitionInputStream:
     """在线程安全队列中传递陆续到达的摄像头帧。"""
 
@@ -27,6 +31,7 @@ class RecognitionInputStream:
 
         self._queue: Queue[ImageInput | object] = Queue()
         self._end_marker = object()
+        self._cancel_marker = object()
         self._finished = False
         self._lock = Lock()
 
@@ -47,6 +52,15 @@ class RecognitionInputStream:
             self._finished = True
             self._queue.put(self._end_marker)
 
+    def cancel(self) -> None:
+        """取消输入流并唤醒消费者；重复取消不会产生额外消息。"""
+
+        with self._lock:
+            if self._finished:
+                return
+            self._finished = True
+            self._queue.put(self._cancel_marker)
+
     def __iter__(self) -> Iterator[ImageInput]:
         """按提交顺序阻塞读取图片，直到采集端结束输入。"""
 
@@ -54,6 +68,8 @@ class RecognitionInputStream:
             item = self._queue.get()
             if item is self._end_marker:
                 return
+            if item is self._cancel_marker:
+                raise RecognitionCancelled("recognition was cancelled")
             if not isinstance(item, ImageInput):
                 raise TypeError("recognition input stream received an invalid item")
             yield item
@@ -181,7 +197,8 @@ class CameraRecognitionWorker(QThread):
         """取消尚未完成的采集，保证等待输入的线程可以退出。"""
 
         self._cancelled = True
-        self._inputs.finish()
+        # 取消标记必须与正常结束标记分开；正常结束会生成判定并写日志，取消则直接终止任务。
+        self._inputs.cancel()
 
     def run(self) -> None:
         """逐帧消费输入，并只在未取消时发送最终结果。"""

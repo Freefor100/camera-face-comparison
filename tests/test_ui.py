@@ -388,3 +388,89 @@ def test_camera_recognition_collects_fixed_five_frame_window(tmp_path, qapplicat
     assert submitted[-1][1] is True
     assert window._capture_timer is None
     window.close()
+
+
+def test_cancelling_camera_capture_keeps_window_busy_until_worker_finishes(
+    tmp_path,
+    qapplication,
+    monkeypatch,
+) -> None:
+    """取消采集后必须等待识别线程退出，不能提前启动另一项模型任务。"""
+
+    class FakeStreamingWorker:
+        """记录取消状态的流式识别线程替身。"""
+
+        def __init__(self) -> None:
+            """创建尚未取消的测试线程状态。"""
+
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            """记录主窗口发出的取消请求。"""
+
+            self.cancelled = True
+
+    settings = load_settings(tmp_path)
+    window = MainWindow(
+        settings=settings,
+        face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
+        camera=FakeCamera(),  # type: ignore[arg-type]
+    )
+    worker = FakeStreamingWorker()
+    monkeypatch.setattr(main_window_module, "CameraRecognitionWorker", FakeStreamingWorker)
+    window._recognition_worker = worker  # type: ignore[assignment]
+    window._capture_timer = main_window_module.QTimer(window)
+    window._capture_timer.start(80)
+    window._captured_frames = [
+        main_window_module.ImageInput.from_camera(
+            np.zeros((20, 20, 3), dtype=np.uint8)
+        )
+    ]
+    window._busy = True
+
+    window._cancel_frame_capture()
+
+    assert worker.cancelled
+    assert window._busy
+    window.on_recognition_finished()
+    assert not window._busy
+    window._recognition_worker = None
+    window.close()
+
+
+def test_result_latency_uses_time_until_interface_update(
+    tmp_path,
+    qapplication,
+    monkeypatch,
+) -> None:
+    """结果区应显示从操作开始到界面处理结果的时间，而不是较短的服务内部时间。"""
+
+    settings = load_settings(tmp_path)
+    window = MainWindow(
+        settings=settings,
+        face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
+        camera=FakeCamera(),  # type: ignore[arg-type]
+    )
+    window._recognition_started_at = 10.0
+    monkeypatch.setattr(main_window_module, "perf_counter", lambda: 10.123)
+
+    window.on_recognition_result(
+        RecognitionResult(
+            status="unknown",
+            person_id=None,
+            display_name=None,
+            top_score=0.4,
+            second_score=0.3,
+            score_gap=0.1,
+            acceptance_score=0.4,
+            acceptance_rule="score_threshold",
+            latency_ms=18.0,
+            reason="score_below_threshold",
+            bbox=None,
+            quality_metrics={},
+            quality_warnings=(),
+        )
+    )
+
+    assert window._recognition_page.latency_label.text() == "123 ms"
+    window.close()
