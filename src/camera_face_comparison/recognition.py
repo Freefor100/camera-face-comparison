@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from time import perf_counter
 from typing import Protocol
 
@@ -12,6 +12,7 @@ from .face_engine import FaceInputError, FaceObservation
 from .face_library import FaceLibrarySnapshot
 from .image_input import ImageInput, measure_quality, quality_warnings
 from .multi_frame import MultiFrameObservation, select_sharpest_frame
+from .open_set_policy import apply_ranked_open_set_policy
 from .repository import FaceRepository
 
 
@@ -23,6 +24,9 @@ class ProbeFaceEngine(Protocol):
         ...
 
 
+TimingSink = Callable[[str, float], None]
+
+
 class RecognitionService:
     """连接图片输入、标准库、Mean Prototype 和开放集判定。"""
 
@@ -32,13 +36,23 @@ class RecognitionService:
         settings: Settings,
         face_engine: ProbeFaceEngine,
         face_library: FaceLibrarySnapshot,
+        timing_sink: TimingSink | None = None,
     ) -> None:
-        """保存日志仓库、冻结策略、引擎和本次查询使用的快照。"""
+        """保存识别依赖，并可选记录本次流程的各阶段耗时。
+
+        参数：
+            repository：用于写入识别日志的仓库。
+            settings：当前运行配置和开放集接收策略。
+            face_engine：提供单人脸特征提取能力的模型适配器。
+            face_library：本次任务使用的不可变标准库快照。
+            timing_sink：可选的阶段耗时回调，供性能实验使用；业务运行可省略。
+        """
 
         self._repository = repository
         self._settings = settings
         self._face_engine = face_engine
         self._face_library = face_library
+        self._timing_sink = timing_sink
 
     def compare(self, frame: np.ndarray) -> RecognitionResult:
         """复制摄像头当前帧并执行与本地图片相同的识别流程。"""
@@ -100,7 +114,9 @@ class RecognitionService:
                 valid_frame_count=0,
             )
         else:
+            selection_started = perf_counter()
             selected = select_sharpest_frame(valid_observations)
+            self._record_timing("frame_selection_ms", selection_started)
             result = self._result_from_observation(
                 selected,
                 started_at=started_at,
@@ -118,9 +134,16 @@ class RecognitionService:
     ) -> MultiFrameObservation:
         """从一张输入提取可用于多帧选择的完整观察。"""
 
-        probe = self._face_engine.extract_single_face(image_input.frame)
+        inference_started = perf_counter()
+        try:
+            probe = self._face_engine.extract_single_face(image_input.frame)
+        finally:
+            # 即使检测失败，也要记录这次模型调用，避免把失败帧的耗时漏掉。
+            self._record_timing("face_inference_ms", inference_started)
+        quality_started = perf_counter()
         metrics = measure_quality(image_input.frame, probe)
         warnings = quality_warnings(metrics, self._settings.quality_warnings)
+        self._record_timing("quality_measurement_ms", quality_started)
         return MultiFrameObservation(
             frame=image_input.frame,
             embedding=probe.embedding,
@@ -141,10 +164,15 @@ class RecognitionService:
     ) -> RecognitionResult:
         """把选中的人脸观察转换成统一识别结果。"""
 
-        decision = self._face_library.search(
-            observation.embedding,
+        search_started = perf_counter()
+        ranked = self._face_library.rank_candidates(observation.embedding)
+        self._record_timing("candidate_search_ms", search_started)
+        decision_started = perf_counter()
+        decision = apply_ranked_open_set_policy(
+            ranked,
             self._settings.recognition_policy,
         )
+        self._record_timing("decision_ms", decision_started)
         names = dict(zip(self._face_library.person_ids, self._face_library.display_names))
         return RecognitionResult(
             status="matched" if decision.accepted else "unknown",
@@ -198,6 +226,7 @@ class RecognitionService:
     def _record_and_return(self, result: RecognitionResult) -> RecognitionResult:
         """记录识别结果后原样返回，保证 UI 和日志使用同一事实。"""
 
+        log_started = perf_counter()
         self._repository.record_recognition(
             decision=result.status,
             person_id=result.person_id,
@@ -209,4 +238,11 @@ class RecognitionService:
             latency_ms=result.latency_ms,
             reason=result.reason,
         )
+        self._record_timing("log_write_ms", log_started)
         return result
+
+    def _record_timing(self, stage: str, started_at: float) -> None:
+        """把一个已完成阶段的耗时交给可选实验记录器。"""
+
+        if self._timing_sink is not None:
+            self._timing_sink(stage, (perf_counter() - started_at) * 1000)

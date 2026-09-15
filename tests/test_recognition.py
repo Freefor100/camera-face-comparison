@@ -88,6 +88,7 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
 
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
+    timings: dict[str, list[float]] = {}
     alice = _create_person(
         repository,
         settings,
@@ -116,9 +117,13 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
                 landmarks=None,
             )
 
-    result = RecognitionService(repository, settings, ProbeEngine(), library.snapshot()).compare(
-        np.full((80, 80, 3), 5, dtype=np.uint8)
-    )
+    result = RecognitionService(
+        repository,
+        settings,
+        ProbeEngine(),
+        library.snapshot(),
+        timing_sink=lambda stage, value: timings.setdefault(stage, []).append(value),
+    ).compare(np.full((80, 80, 3), 5, dtype=np.uint8))
     repository.close()
 
     assert result.status == "matched"
@@ -130,6 +135,14 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
     assert "move_closer" in result.quality_warnings
     assert "hold_still" in result.quality_warnings
     assert "increase_lighting" in result.quality_warnings
+    assert set(timings) == {
+        "face_inference_ms",
+        "quality_measurement_ms",
+        "candidate_search_ms",
+        "decision_ms",
+        "log_write_ms",
+    }
+    assert all(values and values[0] >= 0.0 for values in timings.values())
 
 
 def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, monkeypatch) -> None:

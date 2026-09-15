@@ -37,8 +37,21 @@ class FaceLibrarySnapshot:
 
         if not isinstance(policy, ScoreThresholdPolicy):
             raise TypeError("runtime face library search requires ScoreThresholdPolicy")
+        return apply_ranked_open_set_policy(self.rank_candidates(query_embedding), policy)
+
+    def rank_candidates(self, query_embedding: np.ndarray) -> list[tuple[str, float]]:
+        """用矩阵乘法得到第一、第二候选，不执行开放集接收判定。
+
+        参数：
+            query_embedding：待识别的人脸特征向量。
+        返回：
+            按分数从高到低排列的最多两个候选身份及其余弦相似度。
+        前置条件：
+            快照矩阵中的每一行都是同维度的 L2 单位向量。
+        """
+
         if not self.person_ids:
-            return apply_ranked_open_set_policy((), policy)
+            return []
 
         query = normalize_embedding(query_embedding)
         if self.prototype_matrix.ndim != 2 or self.prototype_matrix.shape[0] != len(
@@ -58,7 +71,7 @@ class FaceLibrarySnapshot:
             second_scores[top_index] = -np.inf
             second_index = int(np.argmax(second_scores))
             ranked.append((self.person_ids[second_index], float(scores[second_index])))
-        return apply_ranked_open_set_policy(ranked, policy)
+        return ranked
 
 
 class InMemoryFaceLibrary:
