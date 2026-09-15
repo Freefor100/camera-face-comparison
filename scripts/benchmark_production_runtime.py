@@ -7,24 +7,96 @@ import sqlite3
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from time import perf_counter
+from threading import Thread
+from time import perf_counter, sleep
 from typing import Any
 
 import numpy as np
 
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.experiment_artifacts import write_json_atomic
-from camera_face_comparison.face_engine import FaceEngine, normalize_embedding
+from camera_face_comparison.face_engine import (
+    DetectedFace,
+    FaceEngine,
+    FaceObservation,
+    normalize_embedding,
+)
 from camera_face_comparison.face_library import FaceLibrarySnapshot
 from camera_face_comparison.image_input import ImageInput
 from camera_face_comparison.recognition import RecognitionService
 from camera_face_comparison.repository import FaceRepository
 from camera_face_comparison.runtime import backend_metadata
+from camera_face_comparison.ui.workers import RecognitionInputStream
 
 FRAME_COUNT = 5
 FRAME_INTERVAL_MS = 80.0
 DEFAULT_IDENTITY_COUNT = 4_588
 DEFAULT_SEQUENCE_COUNT = 10
+
+
+class MeasuredSplitEngine:
+    """记录检测与身份特征模型的实际调用次数和耗时。"""
+
+    def __init__(self, engine: FaceEngine) -> None:
+        """包装同一个真实人脸引擎，不改变其推理结果。"""
+
+        self._engine = engine
+        self.detection_count = 0
+        self.embedding_count = 0
+        self.detection_ms = 0.0
+        self.embedding_ms = 0.0
+
+    def detect_single_face(self, frame: np.ndarray) -> DetectedFace:
+        """执行并记录一次单脸检测。"""
+
+        started_at = perf_counter()
+        self.detection_count += 1
+        try:
+            return self._engine.detect_single_face(frame)
+        finally:
+            self.detection_ms += _elapsed_ms(started_at)
+
+    def extract_detected_face(
+        self,
+        frame: np.ndarray,
+        detected_face: DetectedFace,
+    ) -> FaceObservation:
+        """执行并记录一次五点对齐和身份特征提取。"""
+
+        started_at = perf_counter()
+        self.embedding_count += 1
+        try:
+            return self._engine.extract_detected_face(frame, detected_face)
+        finally:
+            self.embedding_ms += _elapsed_ms(started_at)
+
+
+class LegacyFullFrameEngine(MeasuredSplitEngine):
+    """模拟旧多帧路径：每张检测成功的帧都立即提取身份特征。"""
+
+    def __init__(self, engine: FaceEngine) -> None:
+        """创建一条只用于对照实验的旧路径适配器。"""
+
+        super().__init__(engine)
+        self._observations: dict[int, FaceObservation] = {}
+
+    def detect_single_face(self, frame: np.ndarray) -> DetectedFace:
+        """连续执行检测与特征提取，并暂存完整结果供服务读取。"""
+
+        detected = super().detect_single_face(frame)
+        observation = super().extract_detected_face(frame, detected)
+        self._observations[id(frame)] = observation
+        return detected
+
+    def extract_detected_face(
+        self,
+        frame: np.ndarray,
+        detected_face: DetectedFace,
+    ) -> FaceObservation:
+        """返回旧路径已经为该帧算好的身份特征，不再次运行模型。"""
+
+        del detected_face
+        return self._observations.pop(id(frame))
 
 
 class TimingCollector:
@@ -59,7 +131,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cache", type=Path, default=Path("data/logs/cache/lfw_raw.sqlite"))
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("data/experiments/phase5c/production-runtime")
+        "--output-dir",
+        type=Path,
+        default=Path("data/experiments/phase5d/split-inference-pipeline"),
     )
     parser.add_argument("--identity-count", type=int, default=DEFAULT_IDENTITY_COUNT)
     parser.add_argument("--sequence-count", type=int, default=DEFAULT_SEQUENCE_COUNT)
@@ -120,7 +194,7 @@ def main() -> int:
             snapshot,
             log_repository,
         )
-        multi_records = _run_multi_frame(
+        legacy_multi_records = _run_multi_frame(
             sequences,
             args.warmup_count,
             engine,
@@ -128,12 +202,23 @@ def main() -> int:
             snapshot,
             log_repository,
             args.frame_count,
+            strategy="legacy_collect_then_full_inference",
+        )
+        streaming_multi_records = _run_multi_frame(
+            sequences,
+            args.warmup_count,
+            engine,
+            settings,
+            snapshot,
+            log_repository,
+            args.frame_count,
+            strategy="stream_capture_and_detect",
         )
     finally:
         log_repository.close()
 
     report = {
-        "artifact": "production-runtime-replay-v1",
+        "artifact": "production-runtime-replay-v2",
         "dataset": "LFW natural images",
         "protocol": str(protocol_path),
         "cache": {"path": str(cache_path), "dataset_id": dataset_id, "extraction_id": extraction_id},
@@ -157,28 +242,46 @@ def main() -> int:
         },
         "cases": {
             "single_local_image": _summarize_case(single_records),
-            "camera_five_frame_replay": _summarize_case(multi_records),
+            "camera_legacy_collect_then_full_inference": _summarize_case(
+                legacy_multi_records
+            ),
+            "camera_stream_capture_and_detect": _summarize_case(
+                streaming_multi_records
+            ),
         },
+        "equivalence": _compare_camera_results(
+            legacy_multi_records,
+            streaming_multi_records,
+        ),
         "scope": {
             "measured": [
                 "本地图片解码",
-                "真实 FaceEngine 人脸检测与特征提取",
+                "真实 FaceEngine 人脸检测",
+                "真实 FaceEngine 五点对齐与身份特征提取",
                 "质量指标计算",
                 "五帧清晰度选择",
+                "五帧采集时间与检测计算重叠",
                 "CPU 标准库矩阵检索",
                 "开放集判定",
                 "SQLite 识别日志写入",
                 "RecognitionService 调用总耗时",
             ],
             "not_measured": [
-                "真实摄像头设备取帧；五帧回放使用 LFW 图片代替",
+                "真实摄像头驱动取帧；实验用线程按 80 毫秒间隔提交 LFW 图片",
                 "真实 QThread 往返和主窗口屏幕合成",
-                "GPU 驱动不可用时的 CUDA 推理耗时",
+                "摄像头预览与 CUDA 推理同时运行时的设备资源竞争",
             ],
         },
     }
     write_json_atomic(output_dir / "report.json", report)
-    write_json_atomic(output_dir / "records.json", {"single": single_records, "multi": multi_records})
+    write_json_atomic(
+        output_dir / "records.json",
+        {
+            "single": single_records,
+            "camera_legacy": legacy_multi_records,
+            "camera_streaming": streaming_multi_records,
+        },
+    )
     print(json.dumps(_console_summary(report), ensure_ascii=False, indent=2))
     print(f"reports: {output_dir}")
     return 0
@@ -194,7 +297,16 @@ def _run_single_frame(
 ) -> list[dict[str, Any]]:
     """用每个序列的第一张图片回放本地单帧识别。"""
     inputs = [[sequence[0]] for sequence in sequences]
-    return _run_case(inputs, warmup_count, engine, settings, snapshot, repository, 1)
+    return _run_case(
+        inputs,
+        warmup_count,
+        engine,
+        settings,
+        snapshot,
+        repository,
+        1,
+        strategy="single_image",
+    )
 
 
 def _run_multi_frame(
@@ -205,10 +317,19 @@ def _run_multi_frame(
     snapshot: FaceLibrarySnapshot,
     repository: FaceRepository,
     frame_count: int,
+    *,
+    strategy: str,
 ) -> list[dict[str, Any]]:
-    """用同身份五张 LFW 图片回放摄像头多帧识别。"""
+    """用同身份五张 LFW 图片回放一种摄像头识别执行策略。"""
     return _run_case(
-        sequences, warmup_count, engine, settings, snapshot, repository, frame_count
+        sequences,
+        warmup_count,
+        engine,
+        settings,
+        snapshot,
+        repository,
+        frame_count,
+        strategy=strategy,
     )
 
 
@@ -220,6 +341,8 @@ def _run_case(
     snapshot: FaceLibrarySnapshot,
     repository: FaceRepository,
     frame_count: int,
+    *,
+    strategy: str,
 ) -> list[dict[str, Any]]:
     """执行一组真实 RecognitionService 调用并保留每条阶段数据。"""
     collector = TimingCollector()
@@ -232,6 +355,7 @@ def _run_case(
             repository,
             collector,
             frame_count,
+            strategy=strategy,
             keep=False,
         )
     records: list[dict[str, Any]] = []
@@ -245,6 +369,7 @@ def _run_case(
                 repository,
                 collector,
                 frame_count,
+                strategy=strategy,
                 keep=True,
             )
         )
@@ -260,6 +385,7 @@ def _run_once(
     collector: TimingCollector,
     frame_count: int,
     *,
+    strategy: str,
     keep: bool,
 ) -> dict[str, Any]:
     """读取一条输入并调用生产识别服务，返回实际阶段计时。"""
@@ -267,43 +393,96 @@ def _run_once(
     read_started = perf_counter()
     inputs = tuple(ImageInput.from_file(path, source_type="dataset") for path in paths)
     input_decode_ms = _elapsed_ms(read_started)
-    service_started = perf_counter()
+    measured_engine: MeasuredSplitEngine
+    if strategy == "legacy_collect_then_full_inference":
+        measured_engine = LegacyFullFrameEngine(engine)
+    else:
+        measured_engine = MeasuredSplitEngine(engine)
     service = RecognitionService(
         repository,
         settings,
-        engine,
+        measured_engine,
         snapshot,
         timing_sink=collector,
     )
-    result = (
-        service.compare_input(inputs[0])
-        if frame_count == 1
-        else service.compare_inputs(inputs)
-    )
-    service_call_ms = _elapsed_ms(service_started)
+    request_started_at = perf_counter()
+    if strategy == "single_image":
+        result = service.compare_input(inputs[0], started_at=request_started_at)
+    elif strategy == "legacy_collect_then_full_inference":
+        _wait_until_last_camera_frame(request_started_at, frame_count)
+        result = service.compare_inputs(
+            inputs,
+            frame_count=frame_count,
+            started_at=request_started_at,
+        )
+    elif strategy == "stream_capture_and_detect":
+        input_stream = RecognitionInputStream()
+        producer = Thread(
+            target=_submit_camera_frames,
+            args=(input_stream, inputs, request_started_at),
+            daemon=True,
+        )
+        producer.start()
+        result = service.compare_inputs(
+            input_stream,
+            frame_count=frame_count,
+            started_at=request_started_at,
+        )
+        producer.join()
+    else:
+        raise ValueError(f"unknown replay strategy: {strategy}")
+    click_to_result_ms = _elapsed_ms(request_started_at)
     if not keep:
         return {}
     record = {
+        "strategy": strategy,
         "input_decode_ms": input_decode_ms,
-        "face_inference_ms": collector.total("face_inference_ms"),
+        "face_detection_ms": measured_engine.detection_ms,
+        "embedding_extraction_ms": measured_engine.embedding_ms,
+        "detection_call_count": measured_engine.detection_count,
+        "embedding_call_count": measured_engine.embedding_count,
         "quality_measurement_ms": collector.total("quality_measurement_ms"),
         "frame_selection_ms": collector.total("frame_selection_ms"),
         "candidate_search_ms": collector.total("candidate_search_ms"),
         "decision_ms": collector.total("decision_ms"),
         "log_write_ms": collector.total("log_write_ms"),
-        "service_call_ms": service_call_ms,
+        "click_to_result_ms": click_to_result_ms,
         "service_reported_latency_ms": result.latency_ms,
-        "replay_total_ms": input_decode_ms + service_call_ms,
+        "replay_total_ms": input_decode_ms + click_to_result_ms,
         "capture_window_ms": 0.0 if frame_count == 1 else (frame_count - 1) * FRAME_INTERVAL_MS,
-        "replay_total_with_capture_window_ms": (
-            input_decode_ms + service_call_ms
-            + (0.0 if frame_count == 1 else (frame_count - 1) * FRAME_INTERVAL_MS)
-        ),
         "status": result.status,
+        "person_id": result.person_id,
+        "top_score": result.top_score,
+        "second_score": result.second_score,
         "valid_frame_count": result.valid_frame_count,
         "selected_frame_index": result.selected_frame_index,
     }
     return record
+
+
+def _wait_until_last_camera_frame(started_at: float, frame_count: int) -> None:
+    """模拟旧路径先收齐摄像头帧，再开始模型处理。"""
+
+    deadline = started_at + ((frame_count - 1) * FRAME_INTERVAL_MS / 1000.0)
+    remaining = deadline - perf_counter()
+    if remaining > 0.0:
+        sleep(remaining)
+
+
+def _submit_camera_frames(
+    input_stream: RecognitionInputStream,
+    inputs: tuple[ImageInput, ...],
+    started_at: float,
+) -> None:
+    """按摄像头采集时刻提交帧，使检测能与后续等待重叠。"""
+
+    for index, image_input in enumerate(inputs):
+        deadline = started_at + (index * FRAME_INTERVAL_MS / 1000.0)
+        remaining = deadline - perf_counter()
+        if remaining > 0.0:
+            sleep(remaining)
+        input_stream.submit(image_input)
+    input_stream.finish()
 
 
 def _build_sequences(
@@ -426,15 +605,81 @@ def _summarize_case(records: list[dict[str, Any]]) -> dict[str, Any]:
         if not values:
             continue
         summary["stages"][name] = {
-            "mean_ms": float(np.mean(values)),
-            "p50_ms": float(np.percentile(values, 50)),
-            "p95_ms": float(np.percentile(values, 95)),
+            "mean": float(np.mean(values)),
+            "median": float(np.percentile(values, 50)),
+            "percentile_95": float(np.percentile(values, 95)),
         }
     summary["status_counts"] = {
         status: sum(row["status"] == status for row in records)
         for status in sorted({row["status"] for row in records})
     }
     return summary
+
+
+def _compare_camera_results(
+    legacy_records: list[dict[str, Any]],
+    streaming_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """检查新旧路径的候选、判定和分数是否保持一致。"""
+
+    if len(legacy_records) != len(streaming_records):
+        raise ValueError("camera replay record counts do not match")
+    mismatches: list[dict[str, Any]] = []
+    maximum_score_error = 0.0
+    for index, (legacy, streaming) in enumerate(
+        zip(legacy_records, streaming_records, strict=True)
+    ):
+        score_errors = []
+        for field in ("top_score", "second_score"):
+            left = legacy[field]
+            right = streaming[field]
+            if left is not None and right is not None:
+                score_errors.append(abs(float(left) - float(right)))
+        maximum_score_error = max(maximum_score_error, *score_errors, 0.0)
+        same_result = all(
+            legacy[field] == streaming[field]
+            for field in (
+                "status",
+                "person_id",
+                "valid_frame_count",
+                "selected_frame_index",
+            )
+        )
+        if not same_result or any(error > 1e-6 for error in score_errors):
+            mismatches.append(
+                {
+                    "record_index": index,
+                    "legacy": {
+                        field: legacy[field]
+                        for field in (
+                            "status",
+                            "person_id",
+                            "top_score",
+                            "second_score",
+                            "valid_frame_count",
+                            "selected_frame_index",
+                        )
+                    },
+                    "streaming": {
+                        field: streaming[field]
+                        for field in (
+                            "status",
+                            "person_id",
+                            "top_score",
+                            "second_score",
+                            "valid_frame_count",
+                            "selected_frame_index",
+                        )
+                    },
+                }
+            )
+    return {
+        "record_count": len(legacy_records),
+        "mismatch_count": len(mismatches),
+        "maximum_score_absolute_error": maximum_score_error,
+        "passed": not mismatches,
+        "mismatches": mismatches,
+    }
 
 
 def _console_summary(report: dict[str, Any]) -> dict[str, Any]:
@@ -447,13 +692,15 @@ def _console_summary(report: dict[str, Any]) -> dict[str, Any]:
         stages = case["stages"]
         result[name] = {
             "records": case["record_count"],
-            "replay_total_p50_ms": stages["replay_total_ms"]["p50_ms"],
-            "replay_total_with_capture_window_p50_ms": stages[
-                "replay_total_with_capture_window_ms"
-            ]["p50_ms"],
-            "face_inference_p50_ms": stages["face_inference_ms"]["p50_ms"],
-            "candidate_search_p50_ms": stages["candidate_search_ms"]["p50_ms"],
+            "replay_total_median_ms": stages["replay_total_ms"]["median"],
+            "click_to_result_median_ms": stages["click_to_result_ms"]["median"],
+            "face_detection_median_ms": stages["face_detection_ms"]["median"],
+            "embedding_extraction_median_ms": stages["embedding_extraction_ms"]["median"],
+            "detection_calls_median": stages["detection_call_count"]["median"],
+            "embedding_calls_median": stages["embedding_call_count"]["median"],
+            "candidate_search_median_ms": stages["candidate_search_ms"]["median"],
         }
+    result["equivalence"] = report["equivalence"]
     return result
 
 

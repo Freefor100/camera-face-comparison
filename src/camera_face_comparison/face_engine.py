@@ -50,7 +50,7 @@ class FaceEngine:
         """保存模型分析器和质量测量函数。
 
         参数：
-            analyzer：提供 `get(frame)` 方法的 InsightFace 兼容分析器。
+            analyzer：提供 `det_model` 和 `models["recognition"]` 的 InsightFace 分析器。
             blur_metric：可选的清晰度计算函数，未提供时使用拉普拉斯方差。
             backend：创建分析器时使用的推理后端；直接注入分析器的测试默认按 CPU 标记。
         """
