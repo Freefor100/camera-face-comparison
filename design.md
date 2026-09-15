@@ -1,7 +1,7 @@
 # 人脸比对系统当前实现说明
 
 本文只描述当前代码已经实现的行为。后续工作见 `README.md`，实验结论见
-`docs/phase-5b-cross-quality-results.md`、`docs/phase-5c-results.md` 和 `docs/phase-5d-results.md`。
+`docs/experiments/phase-5b-cross-quality-results.md`、`docs/experiments/phase-5c-results.md` 和 `docs/experiments/phase-5d-results.md`。
 buffalo_l 的模型输入输出及标准库数据流见 `docs/InsightFace模型与标准库数据流.md`。数据角色、
 识别指标和代码字段的定义见 `docs/术语与内部命名.md`。
 
@@ -185,7 +185,7 @@ SQLite 开启外键和预写式日志，数据库锁最长等待五秒，并使�
   但不提前应用接收阈值；
 - 联合标定与评估：只用参数选择集的实际分数断点选参，再把冻结参数应用于一次
   独立验证集；支持按来源身份重复抽样计算 95% 置信区间，以及在小型标准库上重放。
-- 生产性能回放：`scripts/benchmark_production_runtime.py` 直接调用真实 `RecognitionService`，
+- 生产性能回放：`experiments/commands/benchmark_production_runtime.py` 直接调用正式识别服务，
   比较旧的“收齐 5 帧后逐帧检测并逐帧提取身份特征”和当前“采集与检测重叠、只对最清晰帧
   提取身份特征”，分别记录检测、特征提取、矩阵检索、判定、日志及点击到结果耗时；真实摄像头
   驱动取帧与 Qt 屏幕合成不由数据集线程回放代替。
@@ -202,7 +202,7 @@ XQLFW 官方图片对入口仍用于 1:1 跨质量验证；LFW/XQLFW 同路径�
   或专用人脸图像质量评估模型；
 - 质量提示阈值只是操作建议，不是识别准确率保证；
 - 多帧只处理短时间内的偶发质量波动，不能恢复已经丢失的人脸信息；完整端到端耗时结果和
-  多帧接入证据见 `docs/phase-5c-results.md`。
+  多帧接入证据见 `docs/experiments/phase-5c-results.md`。
 - 最终演示标准库已经建立，操作者也已在真实摄像头下完成本人已登记识别和其他人员未知拒识；
   阶段 6 记录见 `docs/phase-6-demo-acceptance.md`。
 
@@ -215,6 +215,6 @@ XQLFW 官方图片对入口仍用于 1:1 跨质量验证；LFW/XQLFW 同路径�
 `integrity.py` 解释图片和向量哈希检查。
 
 界面代码只需要说明 `ui/main_window.py` 负责协调状态，识别页和标准库页负责展示，工作线程负责
-把摄像头读取、模型推理和录入操作移出主线程。实验代码不必逐个文件展开；可以按“数据准备、
-保存原始特征、生成连续候选分数、选择参数、独立验证、性能对照”六个步骤说明 `scripts/` 的职责。
-这一顺序能够把程序入口、核心算法、数据持久化、界面并发和实验依据连成完整链路。
+把摄像头读取、模型推理和录入操作移出主线程。最终程序讲解到这里即可。若老师追问实验依据，
+再按“数据准备、保存原始特征、生成连续候选分数、选择参数、独立验证、性能对照”六个步骤说明
+`experiments/`，不需要逐个文件展开。这样可以清楚区分可运行系统与开发期间的实验工作。

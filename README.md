@@ -2,7 +2,7 @@
 
 离线、跨平台的开放集 1:N 人脸识别课程设计项目。程序从外置摄像头或本地图片读取人脸，在本地标准库中检索已录入人员；证据不足时输出“未知人员”，不会强行给出姓名。
 
-当前版本已经完成主链路、质量验证、开放集规则联合标定、内存矩阵检索、多帧摄像头识别、检测与身份特征拆分、采集与检测流水线、界面收尾和最终演示标准库建立。操作者也已经在真实摄像头下完成本人已登记识别、其他人员未知拒识，并确认模型后端和摄像头设备正常，阶段 6 至此完成。当前代码的准确流程见 [design.md](design.md)，buffalo_l 模型输入输出与标准库数据流见 [InsightFace 模型与标准库数据流](docs/InsightFace模型与标准库数据流.md)，阶段 5C 的矩阵性能、多帧方法和界面证据见 [阶段 5C 结果](docs/phase-5c-results.md)，检测与身份特征拆分的 CUDA 对照见 [阶段 5D 结果](docs/phase-5d-results.md)，阶段 6 的本地建库与验收见 [阶段 6 验收记录](docs/phase-6-demo-acceptance.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，跨质量一对多识别的完整实验和参数选择见 [阶段 5B 结果](docs/phase-5b-cross-quality-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/技术调研-开放集识别规则与质量评估.md)。
+当前版本已经完成主链路、质量验证、开放集规则联合标定、内存矩阵检索、多帧摄像头识别、检测与身份特征拆分、采集与检测流水线、界面收尾和最终演示标准库建立。操作者也已经在真实摄像头下完成本人已登记识别、其他人员未知拒识，并确认模型后端和摄像头设备正常，阶段 6 至此完成。当前代码的准确流程见 [design.md](design.md)，buffalo_l 模型输入输出与标准库数据流见 [InsightFace 模型与标准库数据流](docs/InsightFace模型与标准库数据流.md)，阶段 5C 的矩阵性能、多帧方法和界面证据见 [阶段 5C 结果](docs/experiments/phase-5c-results.md)，检测与身份特征拆分的 CUDA 对照见 [阶段 5D 结果](docs/experiments/phase-5d-results.md)，阶段 6 的本地建库与验收见 [阶段 6 验收记录](docs/phase-6-demo-acceptance.md)，任务书技术要求见 [任务书要求提取](docs/任务书要求提取.md)，需求分析见 [需求分析](docs/需求分析.md)，术语见 [术语与内部命名](docs/术语与内部命名.md)，跨质量一对多识别的完整实验和参数选择见 [阶段 5B 结果](docs/experiments/phase-5b-cross-quality-results.md)，论文与标准依据见 [开放集识别与质量评估调研](docs/experiments/技术调研-开放集识别规则与质量评估.md)。
 
 ## 项目目标
 
@@ -52,8 +52,8 @@
 - 阶段 5B 已补齐 13,233 张 XQLFW 同路径人脸特征向量，生成六个场景、六种聚合方法的 205,344 条候选排序；这些排序尚未应用接收参数，可直接比较最高分阈值、仅候选分差、双条件和邻域感知余弦（NAC）规则。
 - 以“参数选择集中四个主要场景的有效未登记人员误接收率均不超过 1%”为约束时，最终选出“人员平均特征向量加最高分阈值”，最低接收分数为 `0.5557855`。邻域感知余弦方法使用 32 个相邻身份时，最差场景的已登记人员正确接收率只高 0.39 个百分点，未达到实验前规定的 1 个百分点收益门槛。
 - 冻结参数在参数选择集的 3～100 人小型标准库中完成 240 次重放，全部满足 1% 未知人员误接收率；随后只执行一次独立验证集，最差跨质量已登记人员正确接收率为 66.30%，最坏未知人员误接收率为 1.43%。完整计数和置信区间见阶段 5B 结果。
-- 已用真实 LFW 图片完成 [标准库精确矩阵检索和完整链路对照](docs/phase-5c-results.md)：4,588 人时，完整链路中位数由 566.103 ms 降至 288.430 ms；含启动成本的中位数为 320.000 ms。3、10、100 人小库收益很小，详细分阶段耗时和等价性证据见阶段 5C 文档。
-- 已在本机 CUDA 上比较旧五帧路径和当前流水线：4,588 人标准库、10 条 LFW 五帧序列中，点击到结果的中位数由 449.756 ms 降至 362.836 ms，95% 分位由 467.339 ms 降至 368.916 ms；身份特征提取次数由有效帧逐张提取降为每序列 1 次，候选和判定零差异。线程回放不包含真实摄像头驱动抖动，详见 [阶段 5D 结果](docs/phase-5d-results.md)。
+- 已用真实 LFW 图片完成 [标准库精确矩阵检索和完整链路对照](docs/experiments/phase-5c-results.md)：4,588 人时，完整链路中位数由 566.103 ms 降至 288.430 ms；含启动成本的中位数为 320.000 ms。3、10、100 人小库收益很小，详细分阶段耗时和等价性证据见阶段 5C 文档。
+- 已在本机 CUDA 上比较旧五帧路径和当前流水线：4,588 人标准库、10 条 LFW 五帧序列中，点击到结果的中位数由 449.756 ms 降至 362.836 ms，95% 分位由 467.339 ms 降至 368.916 ms；身份特征提取次数由有效帧逐张提取降为每序列 1 次，候选和判定零差异。线程回放不包含真实摄像头驱动抖动，详见 [阶段 5D 结果](docs/experiments/phase-5d-results.md)。
 - 上述“点击到结果”回放已经包含五帧采集等待、检测、身份特征提取、标准库检索、阈值判定和日志写入，因此与人工点击后的实际体验处于同一数量级。当前界面显示从任务启动到结果区域更新时的耗时，用于现场观察即可；显示器最终呈现画面的时间无法由界面自身准确测量，本项目不再继续细分这部分差异。
 
 ## 阶段 TODO
@@ -68,7 +68,7 @@
 
 ### 阶段 1：基础链路验收（已完成）
 
-验收过程见 [阶段 1 基础链路验收记录](docs/phase-1-validation.md)，跨阶段问题由 [已知问题台账](docs/known-issues.md) 传递和关闭。
+验收过程见 [阶段 1 基础链路验收记录](docs/experiments/phase-1-validation.md)，跨阶段问题由 [已知问题台账](docs/experiments/known-issues.md) 传递和关闭。
 
 - [x] 建立可随时删除的开发标准库，不导入最终展示人员。
 - [x] 验证外置摄像头扫描、连续采集、停止清屏、重开和摄像头来源录入。
@@ -247,35 +247,40 @@ sim(q, e) = q · e
 
 ## 项目目录与模块职责
 
-项目采用标准的 Python 源码隔离结构。根目录放置使用说明、设计说明和安装配置，实际程序位于
-`src/camera_face_comparison/`，实验命令位于 `scripts/`，自动化测试位于 `tests/`，阶段证据和
-需求材料位于 `docs/`。主要模块职责如下：
+项目把最终桌面程序和开发实验明确分开。课堂演示只需要查看 `README.md`、`design.md` 和
+`src/camera_face_comparison/`；数据集实验全部收纳在 `experiments/`，不会被桌面程序入口导入。
+主要目录和职责如下：
 
 ```text
 camera-face-comparison/
-├─ README.md                         使用、验收状态、目录和实验入口
-├─ design.md                         当前已经实现的系统设计
+├─ README.md、design.md              使用说明和当前系统设计
 ├─ pyproject.toml                    依赖、可编辑安装和程序入口
 ├─ src/camera_face_comparison/
-│  ├─ app.py                         创建应用并组装模型、摄像头和主窗口
-│  ├─ camera.py                      枚举、打开、读取和释放跨平台摄像头
-│  ├─ face_engine.py                 加载模型，完成人脸检测、对齐和身份特征提取
-│  ├─ image_input.py                 统一摄像头与本地图片输入，并测量原始质量指标
-│  ├─ enrollment.py                  新增人员、追加样本、保存图片和失败回滚
-│  ├─ repository.py                  保存人员、样本、向量和识别日志
-│  ├─ integrity.py                   检查数据库、图片和特征向量是否完整
-│  ├─ face_library.py                构建内存人员平均特征矩阵并执行精确检索
-│  ├─ recognition.py                 组织多帧选择、候选检索和未知人员判定
+│  ├─ __main__.py、app.py             启动并组装桌面程序
+│  ├─ camera.py、image_input.py       读取摄像头和本地图片
+│  ├─ face_engine.py、runtime.py      加载模型并执行检测、对齐和特征提取
+│  ├─ multi_frame.py                 从摄像头五帧中选择清晰候选
+│  ├─ face_library.py                构建人员平均特征矩阵并完成精确检索
+│  ├─ open_set_policy.py              根据固定阈值决定姓名或未知人员
+│  ├─ recognition.py                 组织一次完整识别流程
+│  ├─ enrollment.py、repository.py   保存人员、图片、向量和识别日志
+│  ├─ integrity.py                   检查标准库图片和向量完整性
 │  └─ ui/                            识别页、标准库页、工作线程和界面样式
-├─ scripts/                          数据准备、参数标定、效果评测和性能对照
-├─ tests/                            当前业务契约和已复现缺陷的自动化测试
-├─ docs/                             需求、阶段结果、技术调研和已知问题
+├─ scripts/                          模型准备、演示标准库建立和自动复查
+├─ tests/application/                最终桌面程序测试
+├─ experiments/
+│  ├─ face_evaluation/               数据集协议、特征缓存、参数标定和统计模块
+│  ├─ commands/                      数据准备、效果评测和性能对照命令
+│  └─ tests/                         实验协议与统计公式测试
+├─ docs/                             任务书、需求、模型说明和最终验收
+│  └─ experiments/                   阶段实验、技术调研和历史问题证据
 └─ data/                             本地模型、标准库、图片和实验产物，不提交 Git
 ```
 
 `src/` 是源码隔离层，`camera_face_comparison/` 是可以被 Python 导入的主程序包，两者不是重复的
-项目目录。可编辑安装产生的 `camera_face_comparison.egg-info/`、Python 字节码缓存和测试缓存都
-是可重新生成的临时内容，不属于源码，也不会提交。
+项目目录。`experiments/` 与最终程序分离，但保留了阈值、聚合方法、质量实验和性能优化的工作
+证据。可编辑安装产生的安装元数据、Python 字节码缓存和测试缓存都是可重新生成的临时内容，
+不属于源码，也不会提交。
 
 ## 数据目录与一致性检查
 
@@ -319,11 +324,11 @@ SHA-256 检查针对已入库参考图片和 SQLite 中的人脸特征向量 BLO
 LFW 全量协议与自然图片原始缓存：
 
 ```bash
-python scripts/prepare_lfw.py --data-dir ./data --full \
+python -m experiments.commands.prepare_lfw --data-dir ./data --full \
   --known-fraction 0.8 --enrollment-per-identity 5 --seed 2026 \
   --output ./data/datasets/lfw_full_open_set_protocol.json
-python scripts/extract_lfw_raw_embeddings.py --data-dir ./data
-python scripts/export_lfw_decision_scores.py \
+python -m experiments.commands.extract_lfw_raw_embeddings --data-dir ./data
+python -m experiments.commands.export_lfw_decision_scores \
   --data-dir ./data \
   --source-protocol ./data/datasets/lfw_full_open_set_protocol.json \
   --cache-path ./data/logs/cache/lfw_raw.sqlite \
@@ -333,17 +338,17 @@ python scripts/export_lfw_decision_scores.py \
 阶段 5B 使用完整 XQLFW 同路径变体，并在一次独立验证集前先完成参数选择集与小型标准库门槛：
 
 ```bash
-python scripts/extract_xqlfw_raw_embeddings.py --data-dir ./data \
+python -m experiments.commands.extract_xqlfw_raw_embeddings --data-dir ./data \
   --protocol ./data/experiments/phase4/protocol.json \
   --cache-path ./data/logs/cache/xqlfw_full_cuda.sqlite \
   --manifest ./data/experiments/phase5b/xqlfw_full_cuda_manifest.json
-python scripts/export_cross_quality_scores.py --data-dir ./data \
+python -m experiments.commands.export_cross_quality_scores --data-dir ./data \
   --xqlfw-cache ./data/logs/cache/xqlfw_full_cuda.sqlite
-python scripts/calibrate_cross_quality.py \
+python -m experiments.commands.calibrate_cross_quality \
   --scores ./data/experiments/phase5b/decision_scores.sqlite
-python scripts/evaluate_gallery_scale.py --data-dir ./data \
+python -m experiments.commands.evaluate_gallery_scale --data-dir ./data \
   --xqlfw-cache ./data/logs/cache/xqlfw_full_cuda.sqlite
-python scripts/evaluate_cross_quality_policy.py \
+python -m experiments.commands.evaluate_cross_quality_policy \
   --scores ./data/experiments/phase5b/decision_scores.sqlite \
   --calibration-report ./data/experiments/phase5b/calibration_report.json
 ```
@@ -351,11 +356,11 @@ python scripts/evaluate_cross_quality_policy.py \
 XQLFW 官方 6,000 图片对验证和 QMUL 原始模型覆盖压力提取：
 
 ```bash
-python scripts/extract_xqlfw_raw_embeddings.py --data-dir ./data
-python scripts/evaluate_xqlfw.py --data-dir ./data
-python scripts/compare_xqlfw_domains.py
-python scripts/prepare_qmul.py --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
-python scripts/extract_qmul_raw_embeddings.py --data-dir ./data \
+python -m experiments.commands.extract_xqlfw_raw_embeddings --data-dir ./data
+python -m experiments.commands.evaluate_xqlfw --data-dir ./data
+python -m experiments.commands.compare_xqlfw_domains
+python -m experiments.commands.prepare_qmul --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
+python -m experiments.commands.extract_qmul_raw_embeddings --data-dir ./data \
   --dataset-root ./data/datasets/qmul-survface/QMUL-SurvFace
 ```
 

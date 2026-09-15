@@ -6,7 +6,6 @@ from pathlib import Path
 
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.enrollment import EnrollmentService
-from camera_face_comparison.experiment_artifacts import write_json_atomic
 from camera_face_comparison.face_engine import FaceEngine
 from camera_face_comparison.image_input import ImageInput, measure_quality, quality_warnings
 from camera_face_comparison.repository import FaceRepository
@@ -39,6 +38,18 @@ DEMO_PEOPLE: dict[str, tuple[str, ...]] = {
         "zhangjike/zhangjike_03.jpg",
     ),
 }
+
+
+def write_json_atomic(path: Path, payload: object) -> None:
+    """先写临时文件再原子替换建库清单，避免留下不完整报告。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    temporary_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary_path.replace(path)
 
 
 def parse_args() -> argparse.Namespace:
