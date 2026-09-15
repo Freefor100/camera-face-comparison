@@ -160,6 +160,17 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[cpu,dev,evaluation]"
 ```
 
+启动前请确认终端中的 `python` 来自项目虚拟环境：
+
+```bash
+command -v python
+# 应显示：.../camera-face-comparison/.venv/bin/python
+```
+
+如果仍显示 `/home/leo/anaconda3/bin/python`，说明当前还在 Anaconda 的环境中；可以重新执行
+`source .venv/bin/activate`，或者始终直接使用 `.venv/bin/python`。本项目采用 `src/` 源码布局，
+未安装项目的其他 Python 解释器不会自动找到 `camera_face_comparison` 包。
+
 Linux（NVIDIA GPU）使用 GPU：
 
 ```bash
@@ -180,7 +191,7 @@ python -m pip install -e ".[cpu,dev,evaluation]"
 在能联网的开发机器准备一次模型：
 
 ```bash
-python scripts/prepare_models.py --data-dir ./data
+.venv/bin/python scripts/prepare_models.py --data-dir ./data
 ```
 
 脚本把模型放入可搬运的 `data/models/`。应用启动和正常演示只读取本地模型，不主动联网；演示机器需要复制源码和完整 `data/` 目录。
@@ -188,7 +199,7 @@ python scripts/prepare_models.py --data-dir ./data
 ## 启动与操作
 
 ```bash
-python -m camera_face_comparison --data-dir ./data
+.venv/bin/python -m camera_face_comparison --data-dir ./data
 ```
 
 ### 实时比对
