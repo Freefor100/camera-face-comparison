@@ -104,9 +104,11 @@ class MainWindow(QMainWindow):
         self.integrity_label = self._recognition_page.integrity_label
         backend = getattr(self._face_engine, "backend", None)
         backend_name = getattr(backend, "name", "cpu")
-        self._recognition_page.model_backend_label.setText(str(backend_name).upper())
+        self._recognition_page.model_backend_label.setText(
+            f"推理：{str(backend_name).upper()}"
+        )
         self._recognition_page.threshold_label.setText(
-            f"最低相似度 {self._settings.recognition_policy.minimum_score:.3f}"
+            f"{self._settings.recognition_policy.minimum_score:.3f}"
         )
         self.people_list = self._library_page.people_list
         self.add_person_from_files_button = self._library_page.add_person_from_files_button
@@ -247,6 +249,9 @@ class MainWindow(QMainWindow):
         self._busy = True
         self._recognition_frames = image_inputs
         self._set_task_buttons_enabled(False)
+        self._recognition_page.clear_result_metrics()
+        self.result_label.setText("正在识别")
+        self._recognition_page.result_name_label.setText("正在检测并提取人脸特征")
         self.status_label.setText("正在进行人脸检测与开放集比对…")
         self._recognition_worker = RecognitionWorker(
             database_path=self._settings.database_path,
@@ -268,37 +273,31 @@ class MainWindow(QMainWindow):
                 frame_index = 0
             self._display_frame = self._recognition_frames[frame_index].frame.copy()
         self._last_bbox = result.bbox
-        score_gap_text = _format_score_gap(result)
-        rule_text = _format_rule(result)
         if result.status == "matched":
-            self.result_label.setText(
-                f"识别成功：{result.display_name}｜相似度 {result.top_score:.3f}"
-                f"｜{score_gap_text}｜{rule_text}"
-            )
+            self.result_label.setText("识别成功")
+            self._recognition_page.result_name_label.setText(result.display_name or "已登记人员")
+            self.status_label.setText("已在标准库中找到符合条件的人员。")
         elif result.status == "unknown":
-            self.result_label.setText(
-                f"未知人员｜最高相似度 {result.top_score or 0.0:.3f}｜{score_gap_text}"
-                f"｜{rule_text}｜原因：{result.reason}"
-            )
+            self.result_label.setText("未知人员")
+            self._recognition_page.result_name_label.setText("未达到登记人员接收条件")
+            self.status_label.setText(_format_reason(result.reason))
         else:
-            self.result_label.setText(f"无法识别当前画面：{result.reason}")
+            self.result_label.setText("无法识别")
+            self._recognition_page.result_name_label.setText(_format_reason(result.reason))
+            self.status_label.setText("请调整输入后重试。")
         warning_text = _format_quality_warnings(result.quality_warnings)
-        self._recognition_page.threshold_label.setText(
-            f"最低相似度 {self._settings.recognition_policy.minimum_score:.3f}"
-        )
+        self._recognition_page.top_score_label.setText(_format_score(result.top_score))
+        self._recognition_page.score_gap_label.setText(_format_score(result.score_gap))
         self._recognition_page.frame_label.setText(
-            f"参与帧 {result.valid_frame_count}/{result.frame_count}"
+            f"{result.valid_frame_count} / {result.frame_count}"
         )
+        self._recognition_page.latency_label.setText(f"{result.latency_ms:.0f} ms")
+        self._recognition_page.decision_label.setText(_format_decision(result))
         self._recognition_page.quality_label.setText(
             "画面建议：" + (warning_text or "当前输入无需额外调整")
         )
         self._recognition_page.result_source_label.setText(
             "摄像头多帧" if result.frame_count > 1 else "本地图片"
-        )
-        self.status_label.setText(
-            f"本次处理耗时：{result.latency_ms:.0f} ms"
-            f"｜有效帧 {result.valid_frame_count}/{result.frame_count}"
-            + ("" if not warning_text else f"｜画面建议：{warning_text}")
         )
         if self._display_frame is not None:
             self._render_frame(
@@ -309,7 +308,9 @@ class MainWindow(QMainWindow):
 
     def on_recognition_error(self, message: str) -> None:
         """展示识别工作线程抛出的异常信息。"""
-        self.result_label.setText(f"比对失败：{message}")
+        self._recognition_page.clear_result_metrics()
+        self.result_label.setText("比对失败")
+        self._recognition_page.result_name_label.setText(message)
         self.status_label.setText("比对任务异常结束。")
 
     def on_recognition_finished(self) -> None:
@@ -476,7 +477,7 @@ class MainWindow(QMainWindow):
             people,
             {person_id: tuple(samples) for person_id, samples in samples_by_person.items()},
         )
-        self._recognition_page.library_summary_label.setText(f"{len(people)} 个身份")
+        self._recognition_page.library_summary_label.setText(f"标准库：{len(people)} 人")
 
     def recheck_library(self, *, refreshed_person_id: str | None = None) -> None:
         """执行完整性检查；录入成功时只刷新受影响人员，否则重建整个矩阵。"""
@@ -486,7 +487,7 @@ class MainWindow(QMainWindow):
         except (OSError, RuntimeError, TypeError, ValueError) as error:
             self._face_library.clear()
             self._library_valid = False
-            self._set_integrity_label(f"检查失败：{error}", warning=True)
+            self._set_integrity_label(f"数据：检查失败（{error}）", warning=True)
             self._set_library_actions_enabled(False)
             self.refresh_people()
             return
@@ -499,19 +500,19 @@ class MainWindow(QMainWindow):
             except (OSError, RuntimeError, TypeError, ValueError) as error:
                 self._face_library.clear()
                 self._library_valid = False
-                self._set_integrity_label(f"重建失败：{error}", warning=True)
+                self._set_integrity_label(f"数据：重建失败（{error}）", warning=True)
                 self._set_library_actions_enabled(False)
                 self.refresh_people()
                 return
             self._library_valid = True
-            self._set_integrity_label("标准库完整性：正常", warning=False)
+            self._set_integrity_label("数据：正常", warning=False)
             self._set_library_actions_enabled(True)
         else:
             self._face_library.clear()
             self._library_valid = False
             first_failure = report.failures[0]
             self._set_integrity_label(
-                f"标准库完整性：异常（{first_failure.kind}）", warning=True
+                f"数据：异常（{first_failure.kind}）", warning=True
             )
             self._set_library_actions_enabled(False)
         self.refresh_people()
@@ -575,23 +576,41 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
-def _format_score_gap(result: RecognitionResult) -> str:
-    """将识别结果中的候选分差格式化为界面文本。"""
-    if result.score_gap is None:
-        return "候选分差 --"
-    return f"候选分差 {result.score_gap:.3f}"
+def _format_score(value: float | None) -> str:
+    """把可空的相似度或候选分差转换为固定三位小数。"""
+
+    return "--" if value is None else f"{value:.3f}"
 
 
-def _format_rule(result: RecognitionResult) -> str:
-    """把内部接收规则转换为界面可理解的中文名称。"""
+def _format_decision(result: RecognitionResult) -> str:
+    """根据接收规则和结果状态生成简短、完整的判定说明。"""
 
+    if result.status not in {"matched", "unknown"}:
+        return "输入无效"
+    accepted = result.status == "matched"
     names = {
-        "score_threshold": "判定：最高分阈值",
-        "score_gap": "判定：候选分差",
-        "score_and_gap": "判定：最高分与分差",
-        "nac": "判定：邻域感知分数",
+        "score_threshold": "最高相似度达到阈值" if accepted else "最高相似度低于阈值",
+        "score_gap": "候选分差达到阈值" if accepted else "候选分差低于阈值",
+        "score_and_gap": "相似度与分差均达标" if accepted else "相似度或分差未达标",
+        "nac": "邻域分数达到阈值" if accepted else "邻域分数低于阈值",
     }
     return names[result.acceptance_rule]
+
+
+def _format_reason(reason: str | None) -> str:
+    """把内部失败代码转换为用户可理解的说明。"""
+
+    messages = {
+        "no_face_detected": "画面中未检测到人脸。",
+        "multiple_faces": "画面中检测到多张人脸，请只保留一人。",
+        "invalid_embedding": "人脸特征提取失败。",
+        "no_valid_frames": "采集的画面均未得到有效单人脸。",
+        "score_below_threshold": "最高相似度低于判定阈值。",
+        "score_gap_below_minimum": "前两名候选的分差不足。",
+        "insufficient_gallery_identities": "标准库人数不足，无法完成当前判定。",
+        "nac_below_threshold": "邻域识别分数低于判定阈值。",
+    }
+    return messages.get(reason or "", reason or "未能完成识别。")
 
 
 def _format_quality_warnings(warnings: tuple[str, ...]) -> str:

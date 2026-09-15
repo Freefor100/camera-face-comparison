@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -43,48 +44,27 @@ class RecognitionPage(QWidget):
         title_group.addWidget(title)
         title_group.addWidget(self.subtitle)
         header.addLayout(title_group, 1)
-        self.page_hint = QLabel("证据不足时明确拒识")
-        self.page_hint.setObjectName("pageHint")
-        header.addWidget(self.page_hint, 0, Qt.AlignTop)
+        header.addLayout(self._build_header_status())
         layout.addLayout(header)
 
-        layout.addWidget(self._build_health_strip())
         layout.addLayout(self._build_controls())
         layout.addWidget(self._build_workbench(), 1)
 
-    def _build_health_strip(self) -> QWidget:
-        """创建显示模型、标准库数量和完整性状态的顶部状态条。"""
-        strip = QWidget()
-        strip.setObjectName("healthStrip")
-        layout = QHBoxLayout(strip)
+    def _build_header_status(self) -> QHBoxLayout:
+        """在标题右侧创建紧凑的运行状态信息。"""
+        layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        self._health_cards: list[QFrame] = []
-        self.model_backend_label = self._make_health_card("模型后端", "加载中")
-        self.library_summary_label = self._make_health_card("标准库", "0 个身份")
-        self.integrity_label = self._make_health_card("数据状态", "检查中")
+        layout.setSpacing(18)
+        self.model_backend_label = QLabel("推理：加载中")
+        self.model_backend_label.setObjectName("headerStatus")
+        self.library_summary_label = QLabel("标准库：0 人")
+        self.library_summary_label.setObjectName("headerStatus")
+        self.integrity_label = QLabel("数据：检查中")
         self.integrity_label.setObjectName("integrityText")
-        layout.addWidget(self.model_backend_label.parentWidget())
-        layout.addWidget(self.library_summary_label.parentWidget())
-        layout.addWidget(self.integrity_label.parentWidget())
-        layout.addStretch(1)
-        return strip
-
-    def _make_health_card(self, caption: str, value: str) -> QLabel:
-        """创建一张状态卡片并返回其中的值标签。"""
-        card = QFrame()
-        card.setObjectName("healthCard")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 10, 18, 10)
-        card_layout.setSpacing(2)
-        caption_label = QLabel(caption.upper())
-        caption_label.setObjectName("healthCaption")
-        value_label = QLabel(value)
-        value_label.setObjectName("healthValue")
-        card_layout.addWidget(caption_label)
-        card_layout.addWidget(value_label)
-        self._health_cards.append(card)
-        return value_label
+        layout.addWidget(self.model_backend_label)
+        layout.addWidget(self.library_summary_label)
+        layout.addWidget(self.integrity_label)
+        return layout
 
     def _build_controls(self) -> QHBoxLayout:
         """创建摄像头选择和识别操作按钮。"""
@@ -161,37 +141,79 @@ class RecognitionPage(QWidget):
         self.result_preview_label.setAlignment(Qt.AlignCenter)
         self.result_preview_label.setMinimumSize(320, 220)
         result_layout.addWidget(self.result_preview_label, 1)
-        self.result_label = QLabel("等待输入图片")
+        self.result_label = QLabel("等待识别")
         self.result_label.setObjectName("resultTitle")
-        self.result_label.setWordWrap(True)
-        self.status_label = QLabel("状态：未启动")
+        self.result_name_label = QLabel("选择摄像头抓拍或本地图片")
+        self.result_name_label.setObjectName("resultName")
+        self.result_name_label.setWordWrap(True)
+        self.status_label = QLabel("等待输入图片")
         self.status_label.setObjectName("statusText")
         self.status_label.setWordWrap(True)
-        self.threshold_label = QLabel("最低相似度 --")
-        self.threshold_label.setObjectName("metricText")
-        self.frame_label = QLabel("参与帧 --")
-        self.frame_label.setObjectName("metricText")
+        metrics = QGridLayout()
+        metrics.setContentsMargins(0, 4, 0, 4)
+        metrics.setHorizontalSpacing(18)
+        metrics.setVerticalSpacing(10)
+        self.top_score_label = self._add_metric(metrics, "最高相似度", 0, 0)
+        self.threshold_label = self._add_metric(metrics, "判定阈值", 0, 1)
+        self.score_gap_label = self._add_metric(metrics, "候选分差", 1, 0)
+        self.frame_label = self._add_metric(metrics, "有效帧", 1, 1)
+        self.latency_label = self._add_metric(metrics, "处理耗时", 2, 0)
+        self.decision_label = self._add_metric(metrics, "判定依据", 2, 1)
         self.quality_label = QLabel("画面建议：--")
         self.quality_label.setObjectName("qualityText")
         self.quality_label.setWordWrap(True)
         result_layout.addWidget(self.result_label)
+        result_layout.addWidget(self.result_name_label)
         result_layout.addWidget(self.status_label)
-        result_layout.addWidget(self.threshold_label)
-        result_layout.addWidget(self.frame_label)
+        result_layout.addLayout(metrics)
         result_layout.addWidget(self.quality_label)
 
         splitter.addWidget(live_card)
         splitter.addWidget(result_card)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 4)
         return splitter
+
+    def _add_metric(
+        self,
+        layout: QGridLayout,
+        caption: str,
+        row: int,
+        column: int,
+    ) -> QLabel:
+        """向结果网格加入固定标题和待更新的数值。"""
+        item = QWidget()
+        item.setObjectName("metricItem")
+        item_layout = QVBoxLayout(item)
+        item_layout.setContentsMargins(0, 0, 0, 0)
+        item_layout.setSpacing(2)
+        caption_label = QLabel(caption)
+        caption_label.setObjectName("metricCaption")
+        value_label = QLabel("--")
+        value_label.setObjectName("metricValue")
+        value_label.setWordWrap(True)
+        item_layout.addWidget(caption_label)
+        item_layout.addWidget(value_label)
+        layout.addWidget(item, row, column)
+        return value_label
+
+    def clear_result_metrics(self) -> None:
+        """开始新任务或任务失败时清空上一轮动态结果。"""
+        for label in (
+            self.top_score_label,
+            self.score_gap_label,
+            self.frame_label,
+            self.latency_label,
+            self.decision_label,
+        ):
+            label.setText("--")
 
     def set_camera_running(self, running: bool) -> None:
         """更新实时预览区的运行状态文字。"""
         self.live_state_label.setText("预览中" if running else "已停止")
 
     def set_integrity_state(self, text: str, *, warning: bool) -> None:
-        """更新顶部完整性卡片的文字和状态属性。"""
+        """更新标题栏中的数据完整性状态。"""
         self.integrity_label.setText(text)
         self.integrity_label.setProperty("state", "warning" if warning else "ok")
         self.integrity_label.style().unpolish(self.integrity_label)

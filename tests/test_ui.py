@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from camera_face_comparison.camera import CameraDevice
 from camera_face_comparison.config import load_settings
-from camera_face_comparison.domain import RecognitionResult
+from camera_face_comparison.domain import FaceSample, Person, RecognitionResult
 from camera_face_comparison.integrity import IntegrityFailure, LibraryVerificationReport
 from camera_face_comparison.repository import FaceRepository, SampleInput
 from camera_face_comparison.ui import main_window as main_window_module
+from camera_face_comparison.ui.library_page import LibraryPage
 from camera_face_comparison.ui.main_window import (
     CAMERA_FRAME_COUNT,
     CAMERA_FRAME_INTERVAL_MS,
@@ -86,7 +88,7 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
     )
     assert window.camera_combo.count() == 1
     assert window.people_list.count() == 1
-    assert "1 张样本" in window.people_list.item(0).text()
+    assert window.people_list.item(0).text() == "Alice（1 张）"
     assert window.import_compare_button.text() == "选择本地图片"
     assert window.add_person_from_files_button.text() == "从本地图片新增人员"
     assert window._enrollment_message(person) == "Alice 已录入，可以参与识别。"
@@ -130,8 +132,8 @@ def test_stopping_preview_clears_the_last_camera_frame(tmp_path, qapplication) -
     window.close()
 
 
-def test_recognition_result_shows_score_gap(tmp_path, qapplication) -> None:
-    """主窗口应显示识别相似度、候选分差和耗时。"""
+def test_recognition_result_uses_separate_fixed_fields(tmp_path, qapplication) -> None:
+    """识别结论与各项数值应分栏显示，不能拼成一条长句。"""
     settings = load_settings(tmp_path)
     window = MainWindow(
         settings=settings,
@@ -157,10 +159,90 @@ def test_recognition_result_shows_score_gap(tmp_path, qapplication) -> None:
         )
     )
 
-    assert "相似度 0.720" in window.result_label.text()
-    assert "候选分差 0.110" in window.result_label.text()
-    assert "18 ms" in window.status_label.text()
+    page = window._recognition_page
+    assert window.result_label.text() == "识别成功"
+    assert page.result_name_label.text() == "Alice"
+    assert page.top_score_label.text() == "0.720"
+    assert page.threshold_label.text() == "0.556"
+    assert page.score_gap_label.text() == "0.110"
+    assert page.frame_label.text() == "1 / 1"
+    assert page.latency_label.text() == "18 ms"
+    assert page.decision_label.text() == "最高相似度达到阈值"
     window.close()
+
+
+def test_library_sample_cards_reflow_and_hide_internal_source(tmp_path, qapplication) -> None:
+    """样本卡片应按宽度重排，并只显示用户可理解的样本编号。"""
+
+    person = Person(id="alice", display_name="Alice", created_at=datetime.now(UTC))
+    samples = tuple(
+        FaceSample(
+            id=f"sample-{index}",
+            person_id=person.id,
+            image_path=f"missing-{index}.jpg",
+            embedding=np.array([1.0, 0.0], dtype=np.float32),
+            quality_metrics={},
+            created_at=datetime.now(UTC),
+            source_type="file",
+        )
+        for index in range(5)
+    )
+    page = LibraryPage(tmp_path)
+    page.set_people([person], {person.id: samples})
+
+    page._relayout_sample_cards(150)
+    narrow_columns = [
+        page.sample_grid.getItemPosition(index)[1]
+        for index in range(page.sample_grid.count())
+    ]
+    assert narrow_columns == [0, 0, 0, 0, 0]
+
+    page._relayout_sample_cards(720)
+    wide_columns = [
+        page.sample_grid.getItemPosition(index)[1]
+        for index in range(page.sample_grid.count())
+    ]
+    assert max(wide_columns) >= 2
+    captions = page.findChildren(QLabel, "sampleCaption")
+    assert [caption.text() for caption in captions] == [
+        "样本 1",
+        "样本 2",
+        "样本 3",
+        "样本 4",
+        "样本 5",
+    ]
+    page.close()
+
+
+def test_switching_people_detaches_previous_sample_cards(tmp_path, qapplication) -> None:
+    """切换人员时应立即移除旧样本卡片，避免短暂重叠显示。"""
+
+    created_at = datetime.now(UTC)
+    people = [
+        Person(id="alice", display_name="Alice", created_at=created_at),
+        Person(id="bob", display_name="Bob", created_at=created_at),
+    ]
+    samples = {
+        person.id: (
+            FaceSample(
+                id=f"{person.id}-sample",
+                person_id=person.id,
+                image_path="missing.jpg",
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                quality_metrics={},
+                created_at=created_at,
+            ),
+        )
+        for person in people
+    }
+    page = LibraryPage(tmp_path)
+    page.set_people(people, samples)
+    previous_cards = tuple(page._sample_cards)
+
+    page.people_list.setCurrentRow(1)
+
+    assert all(card.parentWidget() is None for card in previous_cards)
+    page.close()
 
 
 def test_integrity_failure_disables_library_actions_until_manual_recheck_succeeds(

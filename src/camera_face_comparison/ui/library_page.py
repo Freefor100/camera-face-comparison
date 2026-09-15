@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -14,12 +14,45 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
 from ..domain import FaceSample, Person
+
+SAMPLE_CARD_TARGET_WIDTH = 176
+SAMPLE_GRID_SPACING = 12
+
+
+class SampleThumbnail(QLabel):
+    """按控件可用空间缩放原图，并始终保持图片宽高比。"""
+
+    def __init__(self, pixmap: QPixmap, parent: QWidget | None = None) -> None:
+        """保存原始图片，后续尺寸变化时从原图重新缩放。"""
+        super().__init__(parent)
+        self.setObjectName("sampleThumb")
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(112, 88)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._source_pixmap = pixmap
+        if pixmap.isNull():
+            self.setText("图片不可用")
+
+    def sizeHint(self) -> QSize:
+        """返回适合多数肖像图片的初始显示尺寸。"""
+        return QSize(SAMPLE_CARD_TARGET_WIDTH - 12, 126)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        """缩放缩略图时保留原始比例，避免固定正方形裁切或拉伸。"""
+        super().resizeEvent(event)
+        if not self._source_pixmap.isNull():
+            self.setPixmap(
+                self._source_pixmap.scaled(
+                    self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+            )
 
 
 class LibraryPage(QWidget):
@@ -42,6 +75,7 @@ class LibraryPage(QWidget):
         self._data_dir = data_dir
         self._people: tuple[Person, ...] = ()
         self._samples_by_person: dict[str, tuple[FaceSample, ...]] = {}
+        self._sample_cards: list[QWidget] = []
         self._build()
 
     def _build(self) -> None:
@@ -123,11 +157,8 @@ class LibraryPage(QWidget):
         self.selected_name_label.setObjectName("detailTitle")
         self.selected_count_label = QLabel("样本数 --")
         self.selected_count_label.setObjectName("metricText")
-        self.selected_source_label = QLabel("来源 --")
-        self.selected_source_label.setObjectName("metricText")
         layout.addWidget(self.selected_name_label)
         layout.addWidget(self.selected_count_label)
-        layout.addWidget(self.selected_source_label)
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
         divider.setObjectName("sectionDivider")
@@ -137,10 +168,13 @@ class LibraryPage(QWidget):
         self.sample_scroll.setWidgetResizable(True)
         self.sample_scroll.setObjectName("sampleScroll")
         self.sample_container = QWidget()
+        self.sample_container.setObjectName("sampleContainer")
         self.sample_grid = QGridLayout(self.sample_container)
         self.sample_grid.setContentsMargins(0, 4, 0, 4)
-        self.sample_grid.setSpacing(12)
+        self.sample_grid.setSpacing(SAMPLE_GRID_SPACING)
+        self.sample_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.sample_scroll.setWidget(self.sample_container)
+        self.sample_scroll.viewport().installEventFilter(self)
         layout.addWidget(self.sample_scroll, 1)
         return panel
 
@@ -166,7 +200,7 @@ class LibraryPage(QWidget):
             if wanted and wanted not in person.display_name.casefold():
                 continue
             sample_count = len(self._samples_by_person.get(person.id, ()))
-            item = QListWidgetItem(f"{person.display_name}\n{sample_count} 张样本")
+            item = QListWidgetItem(f"{person.display_name}（{sample_count} 张）")
             item.setData(Qt.UserRole, person.id)
             self.people_list.addItem(item)
             if person.id == old_id:
@@ -174,7 +208,9 @@ class LibraryPage(QWidget):
         self.people_list.blockSignals(False)
         if self.people_list.currentItem() is None and self.people_list.count() > 0:
             self.people_list.setCurrentRow(0)
-        self._show_selected_person(self.people_list.currentItem(), None)
+        else:
+            # 恢复选中项发生在信号阻断期间，需要主动刷新一次详情。
+            self._show_selected_person(self.people_list.currentItem(), None)
 
     def _selected_person_id(self) -> str | None:
         """返回列表当前选中人员的编号。"""
@@ -191,7 +227,6 @@ class LibraryPage(QWidget):
         if current is None:
             self.selected_name_label.setText("未选择人员")
             self.selected_count_label.setText("样本数 --")
-            self.selected_source_label.setText("来源 --")
             return
         person_id = str(current.data(Qt.UserRole))
         person = next((item for item in self._people if item.id == person_id), None)
@@ -200,46 +235,63 @@ class LibraryPage(QWidget):
         samples = self._samples_by_person.get(person_id, ())
         self.selected_name_label.setText(person.display_name)
         self.selected_count_label.setText(f"样本数 {len(samples)}")
-        source_names = sorted({sample.source_type for sample in samples})
-        self.selected_source_label.setText(
-            "来源 " + ("、".join(source_names) if source_names else "--")
-        )
         for index, sample in enumerate(samples):
-            self.sample_grid.addWidget(self._sample_card(sample, index), index // 4, index % 4)
-        self.sample_grid.setRowStretch((len(samples) + 3) // 4, 1)
+            self._sample_cards.append(self._sample_card(sample, index))
+        self._relayout_sample_cards()
 
     def _sample_card(self, sample: FaceSample, index: int) -> QWidget:
         """创建一个样本缩略图卡片；图片缺失时保留明确占位提示。"""
         card = QFrame()
         card.setObjectName("sampleCard")
+        card.setMinimumWidth(132)
+        card.setMaximumWidth(220)
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(6, 6, 6, 6)
-        image_label = QLabel()
-        image_label.setObjectName("sampleThumb")
-        image_label.setFixedSize(112, 112)
         path = Path(sample.image_path)
         if not path.is_absolute():
             path = self._data_dir / path
         pixmap = QPixmap(str(path))
-        if pixmap.isNull():
-            image_label.setText("图片不可用")
-            image_label.setAlignment(Qt.AlignCenter)
-        else:
-            image_label.setPixmap(
-                pixmap.scaled(112, 112, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            )
-        caption = QLabel(f"样本 {index + 1}\n{sample.source_type}")
+        image_label = SampleThumbnail(pixmap)
+        caption = QLabel(f"样本 {index + 1}")
         caption.setObjectName("sampleCaption")
         caption.setAlignment(Qt.AlignCenter)
         card_layout.addWidget(image_label)
         card_layout.addWidget(caption)
         return card
 
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """详情区宽度变化时重新计算样本列数。"""
+        if watched is self.sample_scroll.viewport() and event.type() == QEvent.Resize:
+            self._relayout_sample_cards(self.sample_scroll.viewport().width())
+        return super().eventFilter(watched, event)
+
+    def _relayout_sample_cards(self, available_width: int | None = None) -> None:
+        """按当前可用宽度排列样本卡片，窄窗口至少保留一列。"""
+        width = available_width or self.sample_scroll.viewport().width()
+        columns = max(
+            1,
+            (max(1, width) + SAMPLE_GRID_SPACING)
+            // (SAMPLE_CARD_TARGET_WIDTH + SAMPLE_GRID_SPACING),
+        )
+        card_width = min(
+            220,
+            max(
+                132,
+                (max(1, width) - SAMPLE_GRID_SPACING * (columns - 1)) // columns,
+            ),
+        )
+        for card in self._sample_cards:
+            self.sample_grid.removeWidget(card)
+            card.setFixedWidth(card_width)
+        for index, card in enumerate(self._sample_cards):
+            self.sample_grid.addWidget(card, index // columns, index % columns)
+
     def _clear_sample_grid(self) -> None:
         """删除详情区中的旧缩略图控件。"""
-        while self.sample_grid.count():
-            item = self.sample_grid.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
+        for card in self._sample_cards:
+            self.sample_grid.removeWidget(card)
+            card.hide()
+            card.setParent(None)
+            card.deleteLater()
+        self._sample_cards.clear()
