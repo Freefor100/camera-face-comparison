@@ -95,10 +95,17 @@ class CameraWorker(QThread):
             self._camera.open(self._index)
             self.worker_status.emit(f"已打开摄像头 {self._index}")
             while self._running:
-                self.frame_ready.emit(self._camera.read_frame())
+                frame = self._camera.read_frame()
+                # 停止请求可能发生在阻塞取帧期间。取帧返回后再次确认状态，避免把最后一帧
+                # 排入主线程事件队列，覆盖已经清空的预览区域。
+                if not self._running:
+                    break
+                self.frame_ready.emit(frame)
                 self.msleep(15)
         except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
-            self.worker_error.emit(str(error))
+            # 主动停止期间，驱动可能让尚未完成的取帧调用返回失败；这不是需要展示的运行错误。
+            if self._running:
+                self.worker_error.emit(str(error))
         finally:
             self._camera.close()
             self.worker_status.emit("摄像头已停止")

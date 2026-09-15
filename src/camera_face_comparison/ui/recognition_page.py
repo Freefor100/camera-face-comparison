@@ -161,9 +161,9 @@ class RecognitionPage(QWidget):
         self.score_gap_label = self._add_metric(metrics, "候选分差", 1, 0)
         self.frame_label = self._add_metric(metrics, "可选帧", 1, 1)
         self.frame_label.setToolTip("通过人脸检测并参与清晰度选择的帧数")
-        self.latency_label = self._add_metric(metrics, "点击到结果", 2, 0)
+        self.latency_label = self._add_metric(metrics, "识别用时", 2, 0)
         self.latency_label.setToolTip(
-            "从启动识别任务到结果区域完成更新的时间，不含显示器实际刷新时间"
+            "从启动识别任务到结果区域完成更新的时间；摄像头识别包含五帧采集"
         )
         self.decision_label = self._add_metric(metrics, "判定依据", 2, 1)
         self.quality_label = QLabel("画面建议：--")

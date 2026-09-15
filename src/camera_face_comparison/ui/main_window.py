@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self._library_valid = False
         self._busy = False
         self._camera_worker: CameraWorker | None = None
+        self._camera_preview_active = False
         self._recognition_worker: RecognitionWorker | CameraRecognitionWorker | None = None
         self._enrollment_worker: EnrollmentWorker | None = None
         self._capture_timer: QTimer | None = None
@@ -153,11 +154,17 @@ class MainWindow(QMainWindow):
             self.status_label.setText("请先刷新并选择摄像头。")
             return
         self.stop_camera()
-        self._camera_worker = CameraWorker(self._camera, int(self.camera_combo.currentData()))
-        self._camera_worker.frame_ready.connect(self.on_frame)
-        self._camera_worker.worker_error.connect(self.on_camera_error)
-        self._camera_worker.worker_status.connect(self.status_label.setText)
-        self._camera_worker.start()
+        if self._camera_worker is not None:
+            self.status_label.setText("摄像头仍在停止，请稍候。")
+            return
+        worker = CameraWorker(self._camera, int(self.camera_combo.currentData()))
+        self._camera_worker = worker
+        worker.frame_ready.connect(self.on_frame)
+        worker.worker_error.connect(self.on_camera_error)
+        worker.worker_status.connect(self.status_label.setText)
+        worker.finished.connect(lambda: self._finish_camera_stop(worker))
+        self._camera_preview_active = True
+        worker.start()
         self.camera_combo.setEnabled(False)
         self.refresh_button.setEnabled(False)
         self.start_button.setEnabled(False)
@@ -167,25 +174,52 @@ class MainWindow(QMainWindow):
 
     def stop_camera(self) -> None:
         """停止预览、释放线程和设备，并清除最后一帧画面及检测框。"""
+        self._camera_preview_active = False
         self._cancel_frame_capture()
-        if self._camera_worker is not None:
-            self._camera_worker.stop()
-            self._camera_worker.wait(2000)
-            self._camera_worker = None
-        self.start_button.setEnabled(True)
-        self.camera_combo.setEnabled(True)
-        self.refresh_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.compare_button.setEnabled(False)
         self._current_frame = None
         self._display_frame = None
         self._last_bbox = None
         self.preview_label.clear()
         self.preview_label.setText("预览已停止")
         self._recognition_page.set_camera_running(False)
+        worker = self._camera_worker
+        if worker is None:
+            self._restore_camera_controls_after_stop()
+            return
+        worker.stop()
+        if worker.wait(2000):
+            self._finish_camera_stop(worker)
+            return
+        # 不能在读取线程仍运行时丢弃引用或重新开放设备，否则新线程会释放旧线程正在使用的
+        # V4L2 句柄，进而触发 VIDIOC_QBUF 的“错误的文件描述符”。
+        self.start_button.setEnabled(False)
+        self.camera_combo.setEnabled(False)
+        self.refresh_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+        self.compare_button.setEnabled(False)
+        self.status_label.setText("摄像头正在停止，请稍候。")
+
+    def _finish_camera_stop(self, worker: CameraWorker) -> None:
+        """在摄像头线程真正退出后清除引用并恢复设备操作。"""
+
+        if self._camera_worker is not worker:
+            return
+        self._camera_worker = None
+        self._restore_camera_controls_after_stop()
+
+    def _restore_camera_controls_after_stop(self) -> None:
+        """恢复摄像头停止状态下允许使用的设备控件。"""
+
+        self.start_button.setEnabled(True)
+        self.camera_combo.setEnabled(True)
+        self.refresh_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.compare_button.setEnabled(False)
 
     def on_frame(self, frame: np.ndarray) -> None:
         """接收后台线程的一帧画面，复制后更新预览缓存。"""
+        if not self._camera_preview_active:
+            return
         self._current_frame = frame.copy()
         self._render_frame(self._current_frame, None)
 
