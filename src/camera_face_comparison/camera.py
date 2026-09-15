@@ -35,7 +35,7 @@ class CameraService:
         self._capture: Any | None = None
 
     def discover(self, *, max_index: int = 8) -> list[CameraDevice]:
-        """扫描可打开的摄像头索引并返回设备列表。
+        """扫描能够实际提供彩色视频帧的摄像头索引并返回设备列表。
 
         参数：
             max_index：扫描的索引上限，不包含该值。
@@ -50,8 +50,20 @@ class CameraService:
             capture = self._open_capture(index)
             if capture is None:
                 continue
-            capture.release()
-            devices.append(CameraDevice(index=index, label=f"Camera {index}"))
+            try:
+                ok, frame = capture.read()
+                # Linux UVC 设备可能同时暴露图像节点和元数据节点。元数据节点虽然能够被
+                # VideoCapture 打开，却不能产生应用所需的三通道画面，因此不能显示在列表中。
+                if (
+                    ok
+                    and isinstance(frame, np.ndarray)
+                    and frame.ndim == 3
+                    and frame.shape[2] == 3
+                    and frame.size > 0
+                ):
+                    devices.append(CameraDevice(index=index, label=f"Camera {index}"))
+            finally:
+                capture.release()
         return devices
 
     def open(self, index: int) -> None:
