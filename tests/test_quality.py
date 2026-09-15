@@ -70,13 +70,30 @@ def test_quality_measurements_produce_non_blocking_adjustment_warnings(tmp_path)
 def test_face_engine_adapts_model_output_and_normalizes_embedding(tmp_path) -> None:
     """模型适配器只返回通用观察对象，并在单脸出口完成归一化。"""
 
-    vendor_face = SimpleNamespace(
-        bbox=np.array([10.0, 20.0, 190.0, 200.0]),
-        det_score=0.96,
-        embedding=np.array([3.0, 4.0], dtype=np.float32),
-        kps=np.array([[20.0, 30.0]], dtype=np.float32),
+    class Detector:
+        """返回一张固定人脸。"""
+
+        def detect(self, frame, max_num=0, metric="default"):
+            """返回固定人脸框和关键点。"""
+
+            return (
+                np.array([[10.0, 20.0, 190.0, 200.0, 0.96]], dtype=np.float32),
+                np.array([[[20.0, 30.0]]], dtype=np.float32),
+            )
+
+    class Recognizer:
+        """返回固定身份特征。"""
+
+        def get(self, frame, face):
+            """模拟识别模型输出。"""
+
+            return np.array([3.0, 4.0], dtype=np.float32)
+
+    detector = Detector()
+    analyzer = SimpleNamespace(
+        det_model=detector,
+        models={"detection": detector, "recognition": Recognizer()},
     )
-    analyzer = SimpleNamespace(get=lambda frame: [vendor_face])
     blur_inputs: list[tuple[int, int, int]] = []
 
     def blur_metric(face_crop: np.ndarray) -> float:
@@ -92,6 +109,54 @@ def test_face_engine_adapts_model_output_and_normalizes_embedding(tmp_path) -> N
     assert np.allclose(observation.embedding, [0.6, 0.8])
     assert observation.blur_variance == 1.0
     assert blur_inputs == [(180, 180, 3)]
+
+
+def test_face_engine_detection_does_not_run_identity_model() -> None:
+    """仅检测人脸时不得提前执行身份特征模型。"""
+
+    class Detector:
+        """返回一张带五点关键点的人脸。"""
+
+        def detect(self, frame, max_num=0, metric="default"):
+            """返回测试人脸框和关键点。"""
+
+            assert max_num == 0
+            assert metric == "default"
+            return (
+                np.array([[10.0, 20.0, 190.0, 200.0, 0.96]], dtype=np.float32),
+                np.array(
+                    [[[40.0, 70.0], [150.0, 70.0], [95.0, 110.0], [55.0, 155.0], [135.0, 155.0]]],
+                    dtype=np.float32,
+                ),
+            )
+
+    class Recognizer:
+        """记录身份特征模型的调用次数。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, frame, face):
+            """返回固定的未归一化身份特征。"""
+
+            self.calls += 1
+            return np.array([3.0, 4.0], dtype=np.float32)
+
+    recognizer = Recognizer()
+    analyzer = SimpleNamespace(
+        det_model=Detector(),
+        models={"detection": Detector(), "recognition": recognizer},
+    )
+    engine = FaceEngine(analyzer=analyzer, blur_metric=lambda crop: 25.0)
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+
+    detected = engine.detect_single_face(frame)
+
+    assert recognizer.calls == 0
+    assert detected.bbox == (10.0, 20.0, 190.0, 200.0)
+    observation = engine.extract_detected_face(frame, detected)
+    assert recognizer.calls == 1
+    assert np.allclose(observation.embedding, [0.6, 0.8])
 
 
 def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeypatch) -> None:

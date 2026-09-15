@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Protocol
 
@@ -8,23 +9,40 @@ import numpy as np
 
 from .config import Settings
 from .domain import RecognitionResult
-from .face_engine import FaceInputError, FaceObservation
+from .face_engine import DetectedFace, FaceInputError, FaceObservation
 from .face_library import FaceLibrarySnapshot
 from .image_input import ImageInput, measure_quality, quality_warnings
-from .multi_frame import MultiFrameObservation, select_sharpest_frame
+from .multi_frame import MultiFrameObservation
 from .open_set_policy import apply_ranked_open_set_policy
 from .repository import FaceRepository
 
 
 class ProbeFaceEngine(Protocol):
-    """识别流程所需的最小单人脸提取接口。"""
+    """识别流程所需的分阶段人脸推理接口。"""
 
-    def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
-        """从一张 BGR 图片返回唯一人脸和有效 embedding。"""
+    def detect_single_face(self, frame: np.ndarray) -> DetectedFace:
+        """只检测一张 BGR 图片中的唯一人脸。"""
+        ...
+
+    def extract_detected_face(
+        self,
+        frame: np.ndarray,
+        detected_face: DetectedFace,
+    ) -> FaceObservation:
+        """对已检测人脸执行对齐和身份特征提取。"""
         ...
 
 
 TimingSink = Callable[[str, float], None]
+
+
+@dataclass(frozen=True)
+class _DetectedInput:
+    """一张待识别图片及其尚未提取身份特征的检测结果。"""
+
+    image_input: ImageInput
+    detected_face: DetectedFace
+    frame_index: int
 
 
 class RecognitionService:
@@ -59,33 +77,45 @@ class RecognitionService:
 
         return self.compare_input(ImageInput.from_camera(frame))
 
-    def compare_input(self, image_input: ImageInput) -> RecognitionResult:
+    def compare_input(
+        self,
+        image_input: ImageInput,
+        *,
+        started_at: float | None = None,
+    ) -> RecognitionResult:
         """对一张图片执行开放集 1:N 身份识别。
 
         数值质量指标只产生提示，不会阻断有效单脸。损坏图片在构造 `ImageInput`
         时失败；无人脸、多人脸和无效 embedding 由人脸引擎阻断。
         """
 
-        started_at = perf_counter()
+        request_started_at = perf_counter() if started_at is None else started_at
         try:
-            observation = self._extract_observation(image_input, frame_index=0)
+            detected = self._detect_input(image_input, frame_index=0)
+            observation = self._extract_detected_observation(detected)
             result = self._result_from_observation(
                 observation,
-                started_at=started_at,
+                started_at=request_started_at,
                 frame_count=1,
                 valid_frame_count=1,
                 selected_method="single_frame",
             )
         except (FaceInputError, TypeError, ValueError) as error:
             result = self._invalid_result(
-                started_at=started_at,
+                started_at=request_started_at,
                 reason=str(error),
                 frame_count=1,
                 valid_frame_count=0,
             )
         return self._record_and_return(result)
 
-    def compare_inputs(self, image_inputs: Sequence[ImageInput]) -> RecognitionResult:
+    def compare_inputs(
+        self,
+        image_inputs: Iterable[ImageInput],
+        *,
+        frame_count: int | None = None,
+        started_at: float | None = None,
+    ) -> RecognitionResult:
         """对短时间采集的多张图片提取特征并用清晰度最高帧完成判定。
 
         参数：
@@ -96,62 +126,103 @@ class RecognitionService:
             当前运行策略已验证采用清晰度最高帧，且调用方已限制采集窗口大小。
         """
 
-        started_at = perf_counter()
-        valid_observations: list[MultiFrameObservation] = []
+        request_started_at = perf_counter() if started_at is None else started_at
+        detected_inputs: list[_DetectedInput] = []
+        received_count = 0
         for frame_index, image_input in enumerate(image_inputs):
+            received_count += 1
             try:
-                valid_observations.append(
-                    self._extract_observation(image_input, frame_index=frame_index)
-                )
+                detected_inputs.append(self._detect_input(image_input, frame_index=frame_index))
             except (FaceInputError, TypeError, ValueError):
                 continue
 
-        if not valid_observations:
+        total_frame_count = received_count if frame_count is None else frame_count
+        observation = self._extract_sharpest_available(detected_inputs)
+        if observation is None:
             result = self._invalid_result(
-                started_at=started_at,
+                started_at=request_started_at,
                 reason="no_valid_frames",
-                frame_count=len(image_inputs),
+                frame_count=total_frame_count,
                 valid_frame_count=0,
             )
         else:
-            selection_started = perf_counter()
-            selected = select_sharpest_frame(valid_observations)
-            self._record_timing("frame_selection_ms", selection_started)
             result = self._result_from_observation(
-                selected,
-                started_at=started_at,
-                frame_count=len(image_inputs),
-                valid_frame_count=len(valid_observations),
+                observation,
+                started_at=request_started_at,
+                frame_count=total_frame_count,
+                valid_frame_count=len(detected_inputs),
                 selected_method="sharpest_frame",
             )
         return self._record_and_return(result)
 
-    def _extract_observation(
+    def _detect_input(
         self,
         image_input: ImageInput,
         *,
         frame_index: int,
-    ) -> MultiFrameObservation:
-        """从一张输入提取可用于多帧选择的完整观察。"""
+    ) -> _DetectedInput:
+        """只检测一张输入，供到达即处理的多帧流水线使用。"""
 
-        inference_started = perf_counter()
+        detection_started = perf_counter()
         try:
-            probe = self._face_engine.extract_single_face(image_input.frame)
+            detected_face = self._face_engine.detect_single_face(image_input.frame)
         finally:
-            # 即使检测失败，也要记录这次模型调用，避免把失败帧的耗时漏掉。
-            self._record_timing("face_inference_ms", inference_started)
+            self._record_timing("face_detection_ms", detection_started)
+        return _DetectedInput(
+            image_input=image_input,
+            detected_face=detected_face,
+            frame_index=frame_index,
+        )
+
+    def _extract_detected_observation(
+        self,
+        detected_input: _DetectedInput,
+    ) -> MultiFrameObservation:
+        """只为已经选中的检测结果提取身份特征和质量指标。"""
+
+        extraction_started = perf_counter()
+        try:
+            probe = self._face_engine.extract_detected_face(
+                detected_input.image_input.frame,
+                detected_input.detected_face,
+            )
+        finally:
+            self._record_timing("embedding_extraction_ms", extraction_started)
         quality_started = perf_counter()
-        metrics = measure_quality(image_input.frame, probe)
+        metrics = measure_quality(detected_input.image_input.frame, probe)
         warnings = quality_warnings(metrics, self._settings.quality_warnings)
         self._record_timing("quality_measurement_ms", quality_started)
         return MultiFrameObservation(
-            frame=image_input.frame,
+            frame=detected_input.image_input.frame,
             embedding=probe.embedding,
             bbox=probe.bbox,
             quality_metrics=metrics,
             quality_warnings=warnings,
-            frame_index=frame_index,
+            frame_index=detected_input.frame_index,
         )
+
+    def _extract_sharpest_available(
+        self,
+        detected_inputs: Sequence[_DetectedInput],
+    ) -> MultiFrameObservation | None:
+        """按清晰度尝试身份特征提取，失败时回退到下一帧。"""
+
+        selection_started = perf_counter()
+        ranked = sorted(
+            detected_inputs,
+            key=lambda item: (
+                item.detected_face.blur_variance,
+                -item.frame_index,
+            ),
+            reverse=True,
+        )
+        self._record_timing("frame_selection_ms", selection_started)
+        for detected_input in ranked:
+            try:
+                return self._extract_detected_observation(detected_input)
+            except (FaceInputError, TypeError, ValueError):
+                continue
+        return None
 
     def _result_from_observation(
         self,

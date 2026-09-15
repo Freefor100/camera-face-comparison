@@ -106,15 +106,29 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
     class ProbeEngine:
         """返回低质量指标但 embedding 有效的 Alice 特征。"""
 
-        def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
-            """构造可继续识别的单脸观察。"""
+        def detect_single_face(self, frame: np.ndarray):
+            """构造低质量但有效的单脸检测。"""
+
+            return type(
+                "Detected",
+                (),
+                {
+                    "bbox": (0.0, 0.0, 32.0, 32.0),
+                    "detection_score": 0.30,
+                    "blur_variance": 1.0,
+                    "landmarks": None,
+                },
+            )()
+
+        def extract_detected_face(self, frame: np.ndarray, detected) -> FaceObservation:
+            """构造可继续识别的 Alice 特征。"""
 
             return FaceObservation(
-                bbox=(0.0, 0.0, 32.0, 32.0),
-                detection_score=0.30,
+                bbox=detected.bbox,
+                detection_score=detected.detection_score,
                 embedding=np.array([1.0, 0.0], dtype=np.float32),
-                blur_variance=1.0,
-                landmarks=None,
+                blur_variance=detected.blur_variance,
+                landmarks=detected.landmarks,
             )
 
     result = RecognitionService(
@@ -136,7 +150,8 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
     assert "hold_still" in result.quality_warnings
     assert "increase_lighting" in result.quality_warnings
     assert set(timings) == {
-        "face_inference_ms",
+        "face_detection_ms",
+        "embedding_extraction_ms",
         "quality_measurement_ms",
         "candidate_search_ms",
         "decision_ms",
@@ -167,15 +182,29 @@ def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, mon
     class ProbeEngine:
         """返回 Alice 特征的最小测试引擎。"""
 
-        def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
-            """返回一张有效单脸观察。"""
+        def detect_single_face(self, frame: np.ndarray):
+            """返回一张有效单脸检测。"""
+
+            return type(
+                "Detected",
+                (),
+                {
+                    "bbox": (0.0, 0.0, 64.0, 64.0),
+                    "detection_score": 0.95,
+                    "blur_variance": 100.0,
+                    "landmarks": None,
+                },
+            )()
+
+        def extract_detected_face(self, frame: np.ndarray, detected) -> FaceObservation:
+            """返回 Alice 的有效身份特征。"""
 
             return FaceObservation(
-                bbox=(0.0, 0.0, 64.0, 64.0),
-                detection_score=0.95,
+                bbox=detected.bbox,
+                detection_score=detected.detection_score,
                 embedding=np.array([1.0, 0.0], dtype=np.float32),
-                blur_variance=100.0,
-                landmarks=None,
+                blur_variance=detected.blur_variance,
+                landmarks=detected.landmarks,
             )
 
     result = RecognitionService(
@@ -206,17 +235,31 @@ def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_fram
     class BurstEngine:
         """根据帧像素返回不同清晰度的 Alice 观察。"""
 
-        def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
-            """第二帧模拟检测失败，其余帧返回有效特征。"""
+        def detect_single_face(self, frame: np.ndarray):
+            """第二帧模拟检测失败，其余帧返回检测结果。"""
 
             if int(frame[0, 0, 0]) == 1:
                 raise FaceInputError("multiple_faces")
+            return type(
+                "Detected",
+                (),
+                {
+                    "bbox": (0.0, 0.0, 64.0, 64.0),
+                    "detection_score": 0.95,
+                    "blur_variance": float(frame[0, 0, 0] * 10 + 10),
+                    "landmarks": None,
+                },
+            )()
+
+        def extract_detected_face(self, frame: np.ndarray, detected) -> FaceObservation:
+            """为最终选中的检测结果返回 Alice 特征。"""
+
             return FaceObservation(
-                bbox=(0.0, 0.0, 64.0, 64.0),
-                detection_score=0.95,
+                bbox=detected.bbox,
+                detection_score=detected.detection_score,
                 embedding=np.array([1.0, 0.0], dtype=np.float32),
-                blur_variance=float(frame[0, 0, 0] * 10 + 10),
-                landmarks=None,
+                blur_variance=detected.blur_variance,
+                landmarks=detected.landmarks,
             )
 
     inputs = [
@@ -237,6 +280,76 @@ def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_fram
     assert result.valid_frame_count == 4
     assert result.selected_frame_index == 4
     assert result.selected_method == "sharpest_frame"
+
+
+def test_multiframe_recognition_detects_every_frame_but_extracts_one_embedding(tmp_path) -> None:
+    """五帧清晰度择优只能为最终选中帧提取身份特征。"""
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    _create_person(
+        repository,
+        settings,
+        "Alice",
+        [np.array([1.0, 0.0], dtype=np.float32)],
+    )
+    library = InMemoryFaceLibrary.from_repository(repository)
+
+    class SplitBurstEngine:
+        """分开记录检测与身份特征提取次数。"""
+
+        def __init__(self) -> None:
+            self.detected_markers: list[int] = []
+            self.extracted_markers: list[int] = []
+
+        def detect_single_face(self, frame: np.ndarray):
+            """根据帧标记返回不同清晰度的检测结果。"""
+
+            marker = int(frame[0, 0, 0])
+            self.detected_markers.append(marker)
+            return type(
+                "Detected",
+                (),
+                {
+                    "bbox": (0.0, 0.0, 64.0, 64.0),
+                    "detection_score": 0.95,
+                    "blur_variance": float(marker * 10 + 10),
+                    "landmarks": None,
+                },
+            )()
+
+        def extract_detected_face(self, frame: np.ndarray, detected) -> FaceObservation:
+            """只允许最清晰的最后一帧进入身份特征模型。"""
+
+            marker = int(frame[0, 0, 0])
+            self.extracted_markers.append(marker)
+            return FaceObservation(
+                bbox=detected.bbox,
+                detection_score=detected.detection_score,
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                blur_variance=detected.blur_variance,
+                landmarks=detected.landmarks,
+            )
+
+    engine = SplitBurstEngine()
+    inputs = [
+        ImageInput.from_camera(np.full((80, 80, 3), value, dtype=np.uint8))
+        for value in range(5)
+    ]
+
+    result = RecognitionService(
+        repository,
+        settings,
+        engine,
+        library.snapshot(),
+    ).compare_inputs(inputs)
+    repository.close()
+
+    assert engine.detected_markers == [0, 1, 2, 3, 4]
+    assert engine.extracted_markers == [4]
+    assert result.status == "matched"
+    assert result.selected_frame_index == 4
+    assert result.valid_frame_count == 5
 
 
 def _create_person(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,16 @@ class FaceObservation:
     bbox: tuple[float, float, float, float]
     detection_score: float
     embedding: np.ndarray
+    blur_variance: float
+    landmarks: np.ndarray | None
+
+
+@dataclass(frozen=True)
+class DetectedFace:
+    """尚未执行身份特征提取的人脸检测结果。"""
+
+    bbox: tuple[float, float, float, float]
+    detection_score: float
     blur_variance: float
     landmarks: np.ndarray | None
 
@@ -95,7 +106,7 @@ class FaceEngine:
         return self._backend
 
     def extract_faces(self, frame: np.ndarray) -> list[FaceObservation]:
-        """把一张 BGR 图像中的所有检测结果转换为通用人脸观察对象。
+        """检测图片中的全部人脸，并逐张提取归一化身份特征。
 
         参数：
             frame：OpenCV 读取的 BGR 图像。
@@ -103,30 +114,92 @@ class FaceEngine:
             包含框、检测分数、特征、关键点和清晰度的观察对象列表。
         """
 
-        observations: list[FaceObservation] = []
-        for face in self._analyzer.get(frame):
-            bbox = tuple(float(value) for value in face.bbox)
-            if len(bbox) != 4:
+        return [self.extract_detected_face(frame, face) for face in self.detect_faces(frame)]
+
+    def detect_faces(self, frame: np.ndarray) -> list[DetectedFace]:
+        """只执行人脸检测，不运行身份特征模型。
+
+        参数：
+            frame：OpenCV 读取的 BGR 图像。
+        返回：
+            人脸框、检测分、五点关键点和人脸区域清晰度组成的检测结果。
+        前置条件：
+            InsightFace 分析器已经加载并准备好 detection 模块。
+        """
+
+        detector = getattr(self._analyzer, "det_model", None)
+        if detector is None:
+            raise RuntimeError("InsightFace detection model is unavailable")
+        bboxes, keypoints = detector.detect(frame, max_num=0, metric="default")
+        detected: list[DetectedFace] = []
+        for index, row in enumerate(np.asarray(bboxes)):
+            if row.size < 5:
                 continue
+            bbox = tuple(float(value) for value in row[:4])
             normalized_bbox = (bbox[0], bbox[1], bbox[2], bbox[3])
-            landmarks = getattr(face, "kps", None)
-            observations.append(
-                FaceObservation(
+            landmarks = None
+            if keypoints is not None:
+                landmarks = np.asarray(keypoints[index], dtype=np.float32)
+            detected.append(
+                DetectedFace(
                     bbox=normalized_bbox,
-                    detection_score=float(face.det_score),
-                    embedding=np.asarray(face.embedding, dtype=np.float32),
+                    detection_score=float(row[4]),
                     blur_variance=self._blur_metric(_face_crop(frame, normalized_bbox)),
-                    landmarks=(
-                        np.asarray(landmarks, dtype=np.float32) if landmarks is not None else None
-                    ),
+                    landmarks=landmarks,
                 )
             )
-        return observations
+        return detected
+
+    def detect_single_face(self, frame: np.ndarray) -> DetectedFace:
+        """只执行检测并要求图片中恰好存在一张人脸。"""
+
+        faces = self.detect_faces(frame)
+        if not faces:
+            raise FaceInputError("no_face_detected")
+        if len(faces) != 1:
+            raise FaceInputError("multiple_faces")
+        return faces[0]
+
+    def extract_detected_face(
+        self,
+        frame: np.ndarray,
+        detected_face: DetectedFace,
+    ) -> FaceObservation:
+        """对一张已检测人脸执行五点对齐和身份特征提取。
+
+        参数：
+            frame：检测结果所属的原始 BGR 图像。
+            detected_face：`detect_faces` 返回的一张人脸。
+        返回：
+            包含 L2 单位身份特征向量的完整人脸观察。
+        前置条件：
+            检测结果必须包含识别模型对齐所需的五点关键点。
+        """
+
+        if detected_face.landmarks is None:
+            raise FaceInputError("missing_face_landmarks")
+        models = getattr(self._analyzer, "models", None)
+        recognizer = models.get("recognition") if isinstance(models, dict) else None
+        if recognizer is None:
+            raise RuntimeError("InsightFace recognition model is unavailable")
+        vendor_face = SimpleNamespace(
+            bbox=np.asarray(detected_face.bbox, dtype=np.float32),
+            det_score=detected_face.detection_score,
+            kps=np.asarray(detected_face.landmarks, dtype=np.float32),
+        )
+        embedding = recognizer.get(frame, vendor_face)
+        return FaceObservation(
+            bbox=detected_face.bbox,
+            detection_score=detected_face.detection_score,
+            embedding=normalize_embedding(np.asarray(embedding, dtype=np.float32)),
+            blur_variance=detected_face.blur_variance,
+            landmarks=detected_face.landmarks,
+        )
 
     def extract_single_face(self, frame: np.ndarray) -> FaceObservation:
-        """要求图中恰好一张人脸，并返回归一化 embedding。"""
+        """依次执行单脸检测和身份特征提取。"""
 
-        return validate_single_face(self.extract_faces(frame))
+        return self.extract_detected_face(frame, self.detect_single_face(frame))
 
 
 def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
