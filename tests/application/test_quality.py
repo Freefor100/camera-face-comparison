@@ -1,3 +1,5 @@
+"""验证单脸约束、特征归一化和非阻断式质量提示。"""
+
 from __future__ import annotations
 
 import os

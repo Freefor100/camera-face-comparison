@@ -1,3 +1,5 @@
+"""验证 ONNX Runtime 后端选择、核验和 CUDA 依赖加载。"""
+
 from __future__ import annotations
 
 

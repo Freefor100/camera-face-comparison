@@ -1,3 +1,5 @@
+"""验证跨质量图库构造和候选分数导出的可重复性。"""
+
 from __future__ import annotations
 
 import sqlite3

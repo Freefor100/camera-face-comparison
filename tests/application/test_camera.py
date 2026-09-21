@@ -1,3 +1,5 @@
+"""验证摄像头发现、读取、释放和平台后端选择行为。"""
+
 from __future__ import annotations
 
 import numpy as np

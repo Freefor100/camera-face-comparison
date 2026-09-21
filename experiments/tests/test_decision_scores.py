@@ -1,3 +1,5 @@
+"""验证原始特征标识和无阈值决策分数导出契约。"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,5 @@
+"""在 Qt 后台线程中执行摄像头读取、识别和样本录入任务。"""
+
 from __future__ import annotations
 
 from collections.abc import Iterator

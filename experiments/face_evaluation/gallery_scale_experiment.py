@@ -1,3 +1,5 @@
+"""复现实验输入并评估不同图库规模下的开放集识别性能。"""
+
 from __future__ import annotations
 
 import hashlib

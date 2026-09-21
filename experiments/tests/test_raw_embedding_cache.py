@@ -1,3 +1,5 @@
+"""验证原始特征缓存读写、主脸选择和缓存复用。"""
+
 from __future__ import annotations
 
 import cv2

@@ -1,3 +1,5 @@
+"""构建线程安全的人脸原型库，并提供不可变的候选检索快照。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

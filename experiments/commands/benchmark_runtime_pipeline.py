@@ -1,3 +1,5 @@
+"""基于已准备特征对比基线和优化候选检索流水线性能。"""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,5 @@
+"""解析 XQLFW 配对协议、图片路径和预计算质量分数。"""
+
 from __future__ import annotations
 
 from collections import OrderedDict

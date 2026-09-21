@@ -1,3 +1,5 @@
+"""使用冻结参数评估跨质量开放集策略并生成结果报告。"""
+
 from __future__ import annotations
 
 import argparse

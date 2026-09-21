@@ -1,3 +1,5 @@
+"""预先下载并检查应用离线运行所需的 InsightFace 模型。"""
+
 from __future__ import annotations
 
 import argparse

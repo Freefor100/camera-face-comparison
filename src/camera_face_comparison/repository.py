@@ -1,3 +1,5 @@
+"""通过 SQLite 持久化人员、样本特征和识别日志。"""
+
 from __future__ import annotations
 
 import hashlib

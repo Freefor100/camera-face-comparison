@@ -1,3 +1,5 @@
+"""发现、打开和读取由 OpenCV 管理的本地摄像头设备。"""
+
 from __future__ import annotations
 
 import platform

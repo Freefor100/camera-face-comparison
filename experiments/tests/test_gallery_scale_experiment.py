@@ -1,3 +1,5 @@
+"""验证图库规模实验可重复且不会重新校准冻结策略。"""
+
 from __future__ import annotations
 
 import numpy as np

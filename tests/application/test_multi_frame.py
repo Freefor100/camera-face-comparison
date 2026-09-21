@@ -1,3 +1,5 @@
+"""验证多帧清晰度选择、一致性选择和特征融合策略。"""
+
 from __future__ import annotations
 
 import numpy as np

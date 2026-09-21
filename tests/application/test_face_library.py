@@ -1,3 +1,5 @@
+"""验证内存人脸原型库的检索、快照和增量刷新。"""
+
 from __future__ import annotations
 
 import numpy as np

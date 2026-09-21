@@ -1,3 +1,5 @@
+"""选择并核验 InsightFace 使用的 ONNX Runtime 推理后端。"""
+
 from __future__ import annotations
 
 import ctypes

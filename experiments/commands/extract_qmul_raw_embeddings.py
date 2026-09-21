@@ -1,3 +1,5 @@
+"""批量提取或复用 QMUL-SurvFace 图片的原始人脸特征缓存。"""
+
 from __future__ import annotations
 
 import argparse

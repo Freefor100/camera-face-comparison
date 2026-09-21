@@ -1,3 +1,5 @@
+"""持久化与质量策略无关的原始人脸特征提取结果。"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,5 @@
+"""把 InsightFace 的检测和特征提取能力适配为应用内部接口。"""
+
 from __future__ import annotations
 
 import os

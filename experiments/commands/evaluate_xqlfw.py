@@ -1,3 +1,5 @@
+"""运行 XQLFW 配对验证实验并写出可审计评估报告。"""
+
 from __future__ import annotations
 
 import argparse

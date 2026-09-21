@@ -1,3 +1,5 @@
+"""按交叉验证折评估 XQLFW 验证性能和质量分组表现。"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

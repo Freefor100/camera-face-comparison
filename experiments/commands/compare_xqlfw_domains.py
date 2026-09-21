@@ -1,3 +1,5 @@
+"""比较自然图像和跨质量场景中的 XQLFW 评估结果。"""
+
 from __future__ import annotations
 
 import argparse

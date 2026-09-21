@@ -1,3 +1,5 @@
+"""汇总和导出开放集策略校准所需的身份决策分数。"""
+
 from __future__ import annotations
 
 import json

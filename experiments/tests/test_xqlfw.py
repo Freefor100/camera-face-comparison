@@ -1,3 +1,5 @@
+"""验证 XQLFW 协议解析、质量分数读取和分折评估。"""
+
 from __future__ import annotations
 
 import cv2

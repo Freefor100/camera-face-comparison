@@ -1,3 +1,5 @@
+"""在多种数据场景上联合校准并选择开放集判定参数。"""
+
 from __future__ import annotations
 
 import bisect

@@ -1,3 +1,5 @@
+"""从固定候选图片建立可重复验收的最终演示标准库。"""
+
 from __future__ import annotations
 
 import argparse

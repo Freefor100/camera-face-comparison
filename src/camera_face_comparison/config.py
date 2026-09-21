@@ -1,3 +1,5 @@
+"""创建数据目录，并加载和校验当前版本的应用配置。"""
+
 from __future__ import annotations
 
 import tomllib

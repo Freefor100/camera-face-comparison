@@ -1,3 +1,5 @@
+"""验证当前 SQLite 表结构、事务约束和数据持久化。"""
+
 from __future__ import annotations
 
 import hashlib

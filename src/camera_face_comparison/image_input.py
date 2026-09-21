@@ -1,3 +1,5 @@
+"""统一摄像头和本地文件输入，并计算非阻断式图像质量指标。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

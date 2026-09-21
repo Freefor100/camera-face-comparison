@@ -1,3 +1,5 @@
+"""从评估数据集中提取原始人脸特征和质量指标并写入缓存。"""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence

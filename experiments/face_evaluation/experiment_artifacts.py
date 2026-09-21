@@ -1,3 +1,5 @@
+"""提供实验产物哈希、版本标识和原子写入等通用操作。"""
+
 from __future__ import annotations
 
 import hashlib

@@ -1,3 +1,5 @@
+"""验证标准库重命名、删除和受管图片清理边界。"""
+
 from __future__ import annotations
 
 import hashlib

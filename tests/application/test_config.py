@@ -1,3 +1,5 @@
+"""验证数据目录初始化、当前配置加载和严格校验。"""
+
 from __future__ import annotations
 
 import pytest

@@ -1,3 +1,5 @@
+"""比较多帧选择和特征融合方法在身份识别协议上的表现。"""
+
 from __future__ import annotations
 
 import argparse

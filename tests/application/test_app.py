@@ -1,3 +1,5 @@
+"""验证不同桌面环境下的 Qt 平台和输入法配置。"""
+
 from __future__ import annotations
 
 from camera_face_comparison.app import configure_qt_environment

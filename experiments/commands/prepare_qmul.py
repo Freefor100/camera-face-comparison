@@ -1,3 +1,5 @@
+"""校验 QMUL-SurvFace 数据集并生成统一身份识别协议。"""
+
 from __future__ import annotations
 
 import argparse

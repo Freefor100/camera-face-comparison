@@ -1,3 +1,5 @@
+"""验证标准库对文件替换、哈希和特征异常的检测。"""
+
 from __future__ import annotations
 
 from pathlib import Path

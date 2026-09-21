@@ -1,3 +1,5 @@
+"""验证各类开放集接收规则的分数边界和拒识原因。"""
+
 from __future__ import annotations
 
 import math
@@ -95,4 +97,3 @@ def test_nac_uses_all_available_identities_when_k_exceeds_gallery_size() -> None
 
     expected = math.exp(0.9) / (math.exp(0.9) + math.exp(0.5) + math.exp(0.1))
     assert decision.acceptance_score == pytest.approx(expected)
-

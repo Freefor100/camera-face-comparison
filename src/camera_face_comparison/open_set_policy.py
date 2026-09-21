@@ -1,3 +1,5 @@
+"""定义并执行面向未知身份拒识的开放集判定规则。"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

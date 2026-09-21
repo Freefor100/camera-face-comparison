@@ -1,3 +1,5 @@
+"""解析命令行参数并启动桌面人脸比对应用。"""
+
 from __future__ import annotations
 
 import argparse

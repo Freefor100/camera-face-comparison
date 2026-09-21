@@ -1,3 +1,5 @@
+"""从 LFW 原始特征缓存导出开放集决策分数和运行元数据。"""
+
 from __future__ import annotations
 
 import argparse

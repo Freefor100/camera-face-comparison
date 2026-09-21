@@ -1,3 +1,5 @@
+"""构建人员列表、样本缩略图和标准库管理界面。"""
+
 from __future__ import annotations
 
 from pathlib import Path

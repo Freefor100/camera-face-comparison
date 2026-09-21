@@ -1,3 +1,5 @@
+"""统计跨质量开放集识别结果，并用自举法估计置信区间。"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

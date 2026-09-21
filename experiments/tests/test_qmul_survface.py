@@ -1,3 +1,5 @@
+"""验证 QMUL-SurvFace 标注到统一评估协议的转换。"""
+
 from __future__ import annotations
 
 import numpy as np

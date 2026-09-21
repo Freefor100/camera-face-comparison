@@ -1,3 +1,5 @@
+"""验证 LFW 下载校验和开放集身份协议构造。"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,5 @@
+"""验证摄像头和文件输入的复制、解码及安全元数据。"""
+
 from __future__ import annotations
 
 import numpy as np

@@ -1,3 +1,5 @@
+"""下载校验 LFW 数据集并生成可重复的身份识别协议。"""
+
 from __future__ import annotations
 
 import argparse

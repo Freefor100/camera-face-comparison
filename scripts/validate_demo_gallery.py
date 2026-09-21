@@ -1,3 +1,5 @@
+"""自动验收演示标准库的完整性、识别结果和重启恢复能力。"""
+
 from __future__ import annotations
 
 import argparse

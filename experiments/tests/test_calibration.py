@@ -1,3 +1,5 @@
+"""验证多场景开放集规则校准、选择和冻结参数复用。"""
+
 from __future__ import annotations
 
 import pytest

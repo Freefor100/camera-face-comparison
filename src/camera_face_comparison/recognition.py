@@ -1,3 +1,5 @@
+"""编排人脸检测、质量测量、候选检索和开放集身份判定。"""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence

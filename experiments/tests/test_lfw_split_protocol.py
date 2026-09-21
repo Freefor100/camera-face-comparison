@@ -1,3 +1,5 @@
+"""验证 LFW 划分协议稳定且不同集合身份互斥。"""
+
 from __future__ import annotations
 
 import json

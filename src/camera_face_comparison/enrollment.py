@@ -1,3 +1,5 @@
+"""校验人脸输入并以原子方式把人员样本录入本地标准库。"""
+
 from __future__ import annotations
 
 import hashlib

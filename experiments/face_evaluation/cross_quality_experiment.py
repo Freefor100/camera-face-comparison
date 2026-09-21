@@ -1,3 +1,5 @@
+"""构造跨质量图库场景并导出不含决策参数的候选分数。"""
+
 from __future__ import annotations
 
 import hashlib

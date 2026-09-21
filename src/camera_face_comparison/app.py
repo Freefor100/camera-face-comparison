@@ -1,3 +1,5 @@
+"""组装应用依赖、配置 Qt 运行环境并管理桌面应用生命周期。"""
+
 from __future__ import annotations
 
 import os

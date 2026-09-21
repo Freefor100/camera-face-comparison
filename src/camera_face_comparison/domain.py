@@ -1,3 +1,5 @@
+"""定义人员、样本和识别结果等跨层传递的领域数据。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

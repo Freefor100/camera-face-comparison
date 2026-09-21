@@ -1,3 +1,5 @@
+"""检查标准库数据库、样本文件和特征数据之间的一致性。"""
+
 from __future__ import annotations
 
 import hashlib

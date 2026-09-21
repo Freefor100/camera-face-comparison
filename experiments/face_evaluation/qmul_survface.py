@@ -1,3 +1,5 @@
+"""读取 QMUL-SurvFace 标注并转换为统一身份识别协议。"""
+
 from __future__ import annotations
 
 import json

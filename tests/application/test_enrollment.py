@@ -1,3 +1,5 @@
+"""验证新建和追加人脸样本时的原子录入与失败清理。"""
+
 from __future__ import annotations
 
 from pathlib import Path

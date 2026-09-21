@@ -1,3 +1,5 @@
+"""在冻结策略下运行多档图库规模实验并记录识别指标。"""
+
 from __future__ import annotations
 
 import argparse

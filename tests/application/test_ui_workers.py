@@ -1,3 +1,5 @@
+"""验证 Qt 后台任务的流式输入、取消和资源释放语义。"""
+
 from __future__ import annotations
 
 import numpy as np

@@ -1,3 +1,5 @@
+"""测量不同图库规模下矩阵化候选检索的时间和内存开销。"""
+
 from __future__ import annotations
 
 import argparse

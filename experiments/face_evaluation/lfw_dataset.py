@@ -1,3 +1,5 @@
+"""准备 LFW 数据集并构造可重复的开放集身份划分协议。"""
+
 from __future__ import annotations
 
 import hashlib

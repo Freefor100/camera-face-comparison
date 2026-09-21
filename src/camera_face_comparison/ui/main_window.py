@@ -1,3 +1,5 @@
+"""协调页面、后台线程和应用服务的主窗口控制器。"""
+
 from __future__ import annotations
 
 from pathlib import Path

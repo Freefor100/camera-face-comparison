@@ -1,3 +1,5 @@
+"""使用正式识别流水线测量各阶段和端到端运行时延。"""
+
 from __future__ import annotations
 
 import argparse

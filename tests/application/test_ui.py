@@ -1,3 +1,5 @@
+"""验证主窗口状态协调、识别展示和标准库管理交互。"""
+
 from __future__ import annotations
 
 import hashlib

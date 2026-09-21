@@ -1,3 +1,5 @@
+"""验证命令行入口对可移植数据目录参数的解析。"""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,3 +1,5 @@
+"""构建摄像头控制、画面预览和识别结果展示界面。"""
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal

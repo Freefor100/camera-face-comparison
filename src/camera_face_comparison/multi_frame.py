@@ -1,3 +1,5 @@
+"""实现短时多帧人脸观察的选择和特征融合策略。"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

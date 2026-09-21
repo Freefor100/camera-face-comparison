@@ -1,3 +1,5 @@
+"""协调人员与样本的修改、删除以及受管图片文件清理。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

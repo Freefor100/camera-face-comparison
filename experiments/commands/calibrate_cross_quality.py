@@ -1,3 +1,5 @@
+"""根据跨质量分数产物联合校准开放集识别规则。"""
+
 from __future__ import annotations
 
 import argparse

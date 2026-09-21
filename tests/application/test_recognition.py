@@ -1,3 +1,5 @@
+"""验证候选排序、开放集判定和单帧及多帧识别流程。"""
+
 from __future__ import annotations
 
 import hashlib

@@ -1,3 +1,5 @@
+"""导出跨质量联合校准所需的无阈值候选分数。"""
+
 from __future__ import annotations
 
 import argparse
