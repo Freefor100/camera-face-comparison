@@ -128,6 +128,12 @@ python -m pip install -e ".[cpu,dev,evaluation]"
 .venv/bin/python -m camera_face_comparison --data-dir ./data
 ```
 
+在 Linux KDE Wayland 会话中，程序会在创建 Qt 窗口前自动选择
+`QT_QPA_PLATFORM=wayland` 和 `QT_IM_MODULE=wayland`，因此不需要在启动命令前额外设置环境变量。
+这样可以绕过 pip 版 PySide6 未附带 Fcitx5 Qt 插件的问题，由 KWin 通过原生 Wayland
+输入协议连接 Fcitx5。显式设置 `QT_QPA_PLATFORM=xcb` 或 `offscreen` 时，程序会保留该设置，
+便于 XWayland 故障排查和离屏自动测试；Windows、macOS 与 Linux X11 会话不受影响。
+
 ### 实时比对
 
 1. 刷新设备并选择摄像头，然后启动预览。
