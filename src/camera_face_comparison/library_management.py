@@ -45,6 +45,7 @@ class LibraryManagementService:
         sample = next((item for item in samples if item.id == sample_id), None)
         if sample is None:
             raise ValueError("样本不存在或不属于所选人员")
+        # 删除前先解析并验证路径；数据库提交后只清理已经不再被引用的文件。
         managed_path = self._managed_image_path(sample)
         removed = self._repository.delete_sample(person_id, sample_id)
         failures = self._cleanup_images((managed_path,))
@@ -77,6 +78,7 @@ class LibraryManagementService:
             else (self._settings.data_dir / stored_path).resolve()
         )
         try:
+            # resolve + relative_to 同时阻止 ..、绝对路径和符号链接逃逸受管目录。
             relative = candidate.relative_to(self._faces_root)
         except ValueError as error:
             raise ValueError("样本图片不在受管图片目录中，已停止删除") from error
@@ -96,6 +98,7 @@ class LibraryManagementService:
                 path.unlink(missing_ok=True)
             except OSError:
                 failures.append(path)
+        # 所有图片处理完再删空目录，避免同一人员的多个样本互相影响清理顺序。
         for directory in sorted(parent_directories, key=lambda item: len(item.parts), reverse=True):
             try:
                 directory.rmdir()

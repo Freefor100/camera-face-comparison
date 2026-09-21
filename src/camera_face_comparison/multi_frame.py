@@ -44,6 +44,7 @@ def select_consistent_frame(
     if len(frames) == 1:
         return frames[0]
     similarities = normalized @ normalized.T
+    # 去掉值恒为 1 的自身相似度，只比较该帧与其余有效帧的一致程度。
     similarity_means = (similarities.sum(axis=1) - 1.0) / (len(frames) - 1)
     best_index = max(
         range(len(frames)),
@@ -63,6 +64,7 @@ def select_mean_embedding(
 
     _require_frames(frames)
     normalized = np.stack([normalize_embedding(item.embedding) for item in frames])
+    # 均值会改变向量模长，融合后必须再次归一化才能继续使用余弦点积。
     fused_embedding = normalize_embedding(np.mean(normalized, axis=0))
     representative = select_sharpest_frame(frames)
     return replace(representative, embedding=fused_embedding)

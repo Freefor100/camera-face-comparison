@@ -66,15 +66,18 @@ def load_settings(data_dir: Path) -> Settings:
     faces_dir = resolved_data_dir / "faces"
     models_dir = resolved_data_dir / "models"
     logs_dir = resolved_data_dir / "logs"
+    # 启动时一次性建立完整目录布局，后续服务只处理具体文件，不再各自判断父目录。
     for directory in (resolved_data_dir, faces_dir, models_dir, logs_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     config_path = resolved_data_dir / "config.toml"
+    # 只为全新数据目录写入默认值；已有配置必须经过下方的严格字段校验。
     if not config_path.exists():
         config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     with config_path.open("rb") as config_file:
         config = tomllib.load(config_file)
 
+    # 拒绝多余字段可避免拼错的配置项被静默忽略，也避免继续接受已删除的旧格式。
     _require_exact_keys(config, {"recognition", "quality_warnings"}, "root")
     recognition = _required_table(config, "recognition")
     warning_values = _required_table(config, "quality_warnings")

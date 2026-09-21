@@ -86,6 +86,7 @@ def mixed_gallery_domains(
     for person_id in sorted(enrollment):
         paths = tuple(sorted(set(enrollment[person_id])))
         if len(paths) == 1:
+            # 单样本身份无法内部混合，用种子和身份哈希稳定分配域，且不依赖遍历顺序。
             digest = hashlib.sha256(f"{seed}:{person_id}".encode()).digest()
             assignments[paths[0]] = "xqlfw" if digest[0] % 2 else "natural"
             continue
@@ -93,6 +94,7 @@ def mixed_gallery_domains(
             paths,
             key=lambda path: hashlib.sha256(f"{seed}:{path}".encode()).digest(),
         )
+        # 多样本身份交替分域，保证同一身份在条件允许时同时包含自然与低质量图片。
         for index, path in enumerate(ranked):
             assignments[path] = "natural" if index % 2 == 0 else "xqlfw"
     return assignments
@@ -223,6 +225,7 @@ def export_cross_quality_scores(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = output_path.with_name(output_path.name + ".tmp")
+    # 分数库可能生成很久，始终写临时库，全部场景成功后才替换正式产物。
     temporary_path.unlink(missing_ok=True)
     connection = sqlite3.connect(temporary_path)
     total_scores = total_probe_rejections = total_gallery_rejections = 0
@@ -278,6 +281,7 @@ def export_cross_quality_scores(
         )
         connection.commit()
     except Exception:
+        # 失败产物不能被后续标定误当成完整分数库。
         connection.rollback()
         connection.close()
         temporary_path.unlink(missing_ok=True)

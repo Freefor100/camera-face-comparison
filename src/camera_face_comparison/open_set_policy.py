@@ -111,6 +111,7 @@ def apply_open_set_policy(
         人员分数必须是有限数；相对规则至少需要两个身份。
     """
 
+    # 分数相同时按身份编号排序，保证重复实验和不同平台得到相同候选顺序。
     ranked = sorted(person_scores.items(), key=lambda item: (-float(item[1]), item[0]))
     return apply_ranked_open_set_policy(ranked, policy)
 
@@ -142,6 +143,7 @@ def apply_ranked_open_set_policy(
     second_score = ranked[1][1] if len(ranked) > 1 else None
     score_gap = top_score - second_score if second_score is not None else None
     if isinstance(policy, ScoreThresholdPolicy):
+        # 绝对分数规则不依赖第二候选，因此单人标准库也可以完成判定。
         accepted = top_score >= policy.minimum_score
         return _decision(
             top_person_id,
@@ -154,6 +156,7 @@ def apply_ranked_open_set_policy(
             reason=None if accepted else "score_below_threshold",
         )
 
+    # 分差和 NAC 都是相对规则，只有一个身份时不能把缺失竞争者视为“无限大分差”。
     if second_score is None or score_gap is None:
         return _decision(
             top_person_id,
@@ -178,6 +181,7 @@ def apply_ranked_open_set_policy(
             reason=None if accepted else "score_gap_below_minimum",
         )
     if isinstance(policy, ScoreAndGapPolicy):
+        # 联合规则先报告绝对分不足，只有绝对分达标后才检查相对分差。
         if top_score < policy.minimum_score:
             return _decision(
                 top_person_id,
@@ -227,6 +231,7 @@ def neighborhood_aware_cosine(scores: list[float], *, neighbor_count: int) -> fl
     values = np.asarray(sorted(scores, reverse=True)[:neighbor_count], dtype=np.float64)
     if np.any(~np.isfinite(values)):
         raise ValueError("NAC scores must be finite")
+    # 减去最大值保持 softmax 数值稳定；分子 exp(0) 恒为 1，无需单独计算。
     shifted = values - values[0]
     return float(1.0 / np.exp(shifted).sum())
 

@@ -250,6 +250,7 @@ def _select_one_dimensional_candidate(
     每个断点重新遍历全部 Probe。返回值仍来自真实分数，不做固定网格近似。
     """
 
+    # 候选直接取实际观测分数，避免用固定间隔网格近似阈值。
     candidates = np.unique(values)
     true_counts: list[np.ndarray] = []
     unknown_counts: list[np.ndarray] = []
@@ -326,6 +327,7 @@ def _select_combined_candidate(
             candidates,
             allowed=math.floor(target_fpir * int(np.sum(unknown_mask)) + 1e-12),
         )
+        # 一套参数要同时用于所有场景，所以每个最高分断点取各场景所需分差的最大值。
         required_gaps = np.maximum(required_gaps, scenario_required)
         protocol_totals.append(protocol_known_totals[scenario])
         unknown_totals.append(int(np.sum(unknown_mask)))
@@ -388,6 +390,7 @@ def _suffix_acceptance_counts(
 
     order = np.argsort(values, kind="stable")
     sorted_values = values[order]
+    # 从高分端做后缀累计，可一次得到每个候选阈值以上的命中数量。
     suffix = np.cumsum(mask[order][::-1], dtype=np.int64)[::-1]
     positions = np.searchsorted(sorted_values, candidates, side="left")
     counts = np.zeros(candidates.size, dtype=np.int64)
@@ -413,10 +416,12 @@ def _minimum_gaps_for_unknown_limit(
     for query_index in query_order:
         threshold = thresholds[query_index]
         while position < order.size and scores[order[position]] >= threshold:
+            # 最高分阈值从高到低移动时，维护当前会被第一条件接收的 Unknown 分差有序表。
             bisect.insort(active_gaps, float(gaps[order[position]]))
             position += 1
         if len(active_gaps) > allowed:
             cutoff = active_gaps[-allowed - 1]
+            # 使用紧邻断点上方的浮点数，确保等于 cutoff 的 Unknown 也被严格拒绝。
             required[query_index] = float(np.nextafter(cutoff, np.inf))
     return required
 

@@ -32,6 +32,7 @@ class RecognitionInputStream:
         """创建尚未结束的输入流。"""
 
         self._queue: Queue[ImageInput | object] = Queue()
+        # 正常结束和取消使用不同哨兵，消费者无需轮询共享状态即可立即被唤醒。
         self._end_marker = object()
         self._cancel_marker = object()
         self._finished = False
@@ -144,6 +145,7 @@ class RecognitionWorker(QThread):
         """在线程中打开独立仓库执行识别，并保证结束时关闭连接。"""
         repository: FaceRepository | None = None
         try:
+            # SQLite 连接不能跨线程复用，每个工作线程都打开并关闭自己的短连接。
             repository = FaceRepository(self._database_path)
             service = RecognitionService(
                 repository,
@@ -214,6 +216,7 @@ class CameraRecognitionWorker(QThread):
 
         repository: FaceRepository | None = None
         try:
+            # 识别服务直接迭代阻塞队列，让人脸检测与主线程后续采帧重叠执行。
             repository = FaceRepository(self._database_path)
             service = RecognitionService(
                 repository,

@@ -67,6 +67,7 @@ class RawEmbeddingCache:
             """,
             (self._dataset_id, self._embedding_extraction_id, relative_path),
         ).fetchone()
+        # 路径相同但文件内容变化时视为未命中，调用方必须重新运行模型。
         if row is None or row[0] != file_sha256:
             return None
         if row[1] == "failed":
@@ -133,6 +134,7 @@ class RawEmbeddingCache:
 
         if not reason:
             raise ValueError("raw extraction failure reason must not be empty")
+        # FTE 也写入缓存，长实验恢复时不会对确定失败的图片重复执行昂贵推理。
         self._upsert(
             relative_path=relative_path,
             file_sha256=file_sha256,
@@ -183,6 +185,7 @@ class RawEmbeddingCache:
     ) -> None:
         """原子插入或覆盖同一提取版本下的一张图片结果。"""
 
+        # 主键不包含文件哈希：图片替换后在原位置覆盖旧结果，避免累积不可达历史行。
         self._connection.execute(
             """
             INSERT INTO raw_embeddings (

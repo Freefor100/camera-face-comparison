@@ -50,6 +50,7 @@ def actual_backend_for_analyzer(analyzer: object, requested: ExecutionBackend) -
     if not isinstance(models, dict):
         return requested
     session_providers: list[list[str]] = []
+    # 每个模型各自持有 ORT session；逐个核验首选 provider 可发现 session 级 CPU 回退。
     for model in models.values():
         session = getattr(model, "session", None)
         get_providers = getattr(session, "get_providers", None)
@@ -86,6 +87,7 @@ def select_execution_backend(available_providers: Sequence[str]) -> ExecutionBac
     """
 
     if "CUDAExecutionProvider" in available_providers:
+        # CPU 保留为次级 provider，让不支持 CUDA 的个别算子仍可由 ORT 执行。
         return ExecutionBackend(
             name="cuda",
             providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
@@ -125,6 +127,7 @@ def _preload_cuda_libraries(ort: object) -> None:
     package_root = _site_package_root()
     nvidia_root = package_root / "nvidia"
     if not nvidia_root.is_dir():
+        # 非 pip 拆包布局交回 ORT 自带的加载器处理，避免猜测系统 CUDA 路径。
         preload = getattr(ort, "preload_dlls", None)
         if callable(preload):
             preload()
@@ -142,6 +145,7 @@ def _preload_cuda_libraries(ort: object) -> None:
         for name in library_names
         if path.name == name
     }
+    # 按依赖顺序主动加载运行库，使 ORT 创建 CUDA session 时能解析其全局符号。
     for name in library_names:
         path = library_paths.get(name)
         if path is not None:

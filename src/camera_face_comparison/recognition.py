@@ -102,6 +102,7 @@ class RecognitionService:
                 valid_frame_count=1,
                 selected_method="single_frame",
             )
+        # 当前把流程中的校验异常统一转换为可记录、可展示的无效结果。
         except (FaceInputError, TypeError, ValueError) as error:
             result = self._invalid_result(
                 started_at=request_started_at,
@@ -131,6 +132,7 @@ class RecognitionService:
         request_started_at = perf_counter() if started_at is None else started_at
         detected_inputs: list[_DetectedInput] = []
         received_count = 0
+        # 帧到达时只运行检测；较昂贵的身份特征模型留给最终选中的清晰帧。
         for frame_index, image_input in enumerate(image_inputs):
             received_count += 1
             try:
@@ -138,6 +140,7 @@ class RecognitionService:
             except (FaceInputError, TypeError, ValueError):
                 continue
 
+        # 流式调用方可显式记录计划采集帧数；未提供时使用实际收到的帧数。
         total_frame_count = received_count if frame_count is None else frame_count
         observation = self._extract_sharpest_available(detected_inputs)
         if observation is None:
@@ -169,6 +172,7 @@ class RecognitionService:
         try:
             detected_face = self._face_engine.detect_single_face(image_input.frame)
         finally:
+            # 即使检测抛错也记录耗时，性能报告才能包含失败帧的实际成本。
             self._record_timing("face_detection_ms", detection_started)
         return _DetectedInput(
             image_input=image_input,
@@ -214,6 +218,7 @@ class RecognitionService:
             detected_inputs,
             key=lambda item: (
                 item.detected_face.blur_variance,
+                # 清晰度相同时优先较早帧，保证同一输入序列的选择结果稳定。
                 -item.frame_index,
             ),
             reverse=True,
@@ -223,6 +228,7 @@ class RecognitionService:
             try:
                 return self._extract_detected_observation(detected_input)
             except (FaceInputError, TypeError, ValueError):
+                # 某帧对齐或特征提取失败时继续尝试下一清晰帧，不浪费其余有效检测。
                 continue
         return None
 
@@ -238,6 +244,7 @@ class RecognitionService:
         """把选中的人脸观察转换成统一识别结果。"""
 
         search_started = perf_counter()
+        # 快照在任务创建时已经冻结，识别期间的录入或删除不会改变本次候选集合。
         ranked = self._face_library.rank_candidates(observation.embedding)
         self._record_timing("candidate_search_ms", search_started)
         decision_started = perf_counter()

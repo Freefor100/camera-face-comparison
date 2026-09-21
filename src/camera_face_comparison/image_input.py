@@ -77,6 +77,7 @@ def measure_quality(
 
     crop = _crop_to_bbox(frame, observation.bbox)
     left, top, right, bottom = observation.bbox
+    # 质量指标保留原始连续数值，是否提示由运行配置单独决定，不在这里拒绝输入。
     return {
         "detection_score": observation.detection_score,
         "face_size_px": min(right - left, bottom - top),
@@ -135,5 +136,6 @@ def _crop_to_bbox(
     right = min(width, int(np.ceil(bbox[2])))
     bottom = min(height, int(np.ceil(bbox[3])))
     if right <= left or bottom <= top:
+        # 异常检测框仍返回非空画面，使质量测量得到可诊断数值而不是空数组警告。
         return frame
     return frame[top:bottom, left:right]

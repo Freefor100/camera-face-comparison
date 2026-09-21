@@ -63,12 +63,14 @@ class FaceLibrarySnapshot:
         if self.prototype_matrix.shape[1] != query.size:
             raise ValueError("query embedding dimension does not match face library")
 
+        # 原型和查询均已 L2 归一化，矩阵点积即可一次得到所有身份的余弦相似度。
         scores = self.prototype_matrix @ query
         top_index = int(np.argmax(scores))
         ranked: list[tuple[str, float]] = [
             (self.person_ids[top_index], float(scores[top_index]))
         ]
         if len(self.person_ids) > 1:
+            # 屏蔽第一名后再次取最大值，避免完整排序整个人员矩阵。
             second_scores = scores.copy()
             second_scores[top_index] = -np.inf
             second_index = int(np.argmax(second_scores))
@@ -101,6 +103,7 @@ class InMemoryFaceLibrary:
             samples = repository.list_samples(person.id)
             if not samples:
                 continue
+            # 每张样本先归一化再求均值，防止向量模长影响人员原型的权重。
             normalized = [normalize_embedding(sample.embedding) for sample in samples]
             prototype = normalize_embedding(np.mean(normalized, axis=0))
             entries.append((person.id, person.display_name, prototype))
@@ -124,6 +127,7 @@ class InMemoryFaceLibrary:
             normalized = [normalize_embedding(sample.embedding) for sample in samples]
             prototype = normalize_embedding(np.mean(normalized, axis=0))
             entries.append((person.id, person.display_name, prototype))
+        # 先在锁外完成数据库读取和矩阵计算，只在替换引用时短暂持锁。
         with self._lock:
             self._snapshot = _snapshot_from_entries(
                 entries, revision=self._snapshot.revision + 1
@@ -140,6 +144,7 @@ class InMemoryFaceLibrary:
             replacement = (person.id, person.display_name, normalize_embedding(np.mean(normalized, axis=0)))
 
         with self._lock:
+            # 复制未受影响的行并重建矩阵，旧识别任务持有的快照因此不会被原地修改。
             entries = [
                 (current_id, current_name, self._snapshot.prototype_matrix[index].copy())
                 for index, (current_id, current_name) in enumerate(
@@ -177,5 +182,6 @@ def _snapshot_from_entries(
         matrix = np.ascontiguousarray(np.stack([entry[2] for entry in ordered]), dtype=np.float32)
     else:
         matrix = np.empty((0, 0), dtype=np.float32)
+    # 将共享矩阵标记为只读，防止常规调用代码意外原地修改快照内容。
     matrix.setflags(write=False)
     return FaceLibrarySnapshot(person_ids, display_names, matrix, revision)

@@ -54,6 +54,7 @@ def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVer
 
     face_root = settings.faces_dir.resolve()
     for sample in repository.list_samples():
+        # resolve 后再检查父目录，既能识别绝对路径，也能阻止 .. 和符号链接逃逸标准库目录。
         image_path = (settings.data_dir / sample.image_path).resolve()
         if not _is_within(image_path, face_root):
             failures.append(
@@ -67,6 +68,7 @@ def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVer
             failures.append(IntegrityFailure("image_hash_mismatch", str(image_path), sample.id))
 
         expected_embedding_hash = sample.embedding_sha256
+        # 使用持久化时相同的 float32 字节序列计算哈希，避免数值格式转换造成误报。
         current_embedding_hash = hashlib.sha256(
             np.asarray(sample.embedding, dtype=np.float32).tobytes()
         ).hexdigest()

@@ -211,6 +211,7 @@ def build_full_lfw_protocol(
 
     shuffled = identities.copy()
     random.Random(seed).shuffle(shuffled)
+    # 至少为 Known 和 Unknown 各保留一个身份，防止开放集协议退化为闭集。
     known_count = max(1, min(len(shuffled) - 1, round(len(shuffled) * known_fraction)))
     known_names = {identity.name for identity in shuffled[:known_count]}
 
@@ -341,6 +342,7 @@ def split_lfw_protocol(
         )
         for probe in protocol.probes
     )
+    # 记录源协议哈希，供后续产物追溯来源或执行显式一致性校验。
     return LfwSplitProtocol(
         enrollment=dict(protocol.enrollment),
         probes=split_probes,
@@ -458,6 +460,7 @@ def _safe_extract(archive_path: Path, destination: Path) -> None:
         for member in archive.getmembers():
             member_path = (destination_root / member.name).resolve()
             try:
+                # 解压前统一检查成员名称；链接目标和特殊文件继续由 data filter 校验。
                 member_path.relative_to(destination_root)
             except ValueError as error:
                 raise RuntimeError(f"unsafe archive member: {member.name}") from error
@@ -469,6 +472,7 @@ def _download_with_resume(url: str, partial_path: Path) -> None:
     offset = partial_path.stat().st_size if partial_path.exists() else 0
     request = Request(url, headers={"Range": f"bytes={offset}-"} if offset else {})
     with urlopen(request, timeout=60) as response:
+        # 服务器不接受 Range 时会返回完整内容，此时必须覆盖临时文件而不是继续追加。
         append = offset > 0 and response.status == 206
         with partial_path.open("ab" if append else "wb") as output_file:
             while chunk := response.read(1024 * 1024):

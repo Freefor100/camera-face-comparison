@@ -69,6 +69,7 @@ class EnrollmentService:
         final_dir = self.settings.faces_dir / person_id
         samples: list[SampleInput] = []
         try:
+            # 所有图片先在临时目录完成推理、保存和哈希，避免失败时留下半个人员目录。
             for index, image_input in enumerate(inputs, start=1):
                 observation = self.face_engine.extract_single_face(image_input.frame)
                 embedding = normalize_embedding(observation.embedding)
@@ -84,6 +85,7 @@ class EnrollmentService:
                         image_sha256=_sha256_file(staged_path),
                     )
                 )
+            # 同一文件系统内的目录替换是原子的；数据库只会看到已经全部就位的图片路径。
             final_dir.parent.mkdir(parents=True, exist_ok=True)
             staging_dir.replace(final_dir)
             return self.repository.create_person_with_samples(
@@ -92,6 +94,7 @@ class EnrollmentService:
                 samples=samples,
             )
         except Exception:
+            # 数据库写入失败时 final_dir 可能已经存在，因此临时目录和最终目录都要回收。
             rmtree(staging_dir, ignore_errors=True)
             rmtree(final_dir, ignore_errors=True)
             raise
@@ -122,6 +125,7 @@ class EnrollmentService:
         staged_moves: list[tuple[Path, Path]] = []
         moved_paths: list[Path] = []
         try:
+            # 先准备全部新样本，任一输入无效时不会触碰人员现有的图片目录。
             for index, image_input in enumerate(inputs, start=1):
                 observation = self.face_engine.extract_single_face(image_input.frame)
                 embedding = normalize_embedding(observation.embedding)
@@ -141,6 +145,7 @@ class EnrollmentService:
                     )
                 )
             person_dir.mkdir(parents=True, exist_ok=True)
+            # 数据库需要引用最终路径，所以先移动文件，并记录已移动项供事务失败时反向清理。
             for staged_path, final_path in staged_moves:
                 staged_path.replace(final_path)
                 moved_paths.append(final_path)
@@ -151,6 +156,7 @@ class EnrollmentService:
             return len(samples)
         except Exception:
             rmtree(staging_dir, ignore_errors=True)
+            # 只删除本次操作生成的文件，绝不清空人员目录中的既有样本。
             for moved_path in moved_paths:
                 moved_path.unlink(missing_ok=True)
             raise

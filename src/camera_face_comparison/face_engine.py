@@ -79,6 +79,7 @@ class FaceEngine:
             raise RuntimeError(
                 f"offline model is missing at {model_dir}; run scripts/prepare_models.py first"
             )
+        # 调用方未预设时关闭更新与遥测，并为 Matplotlib 提供应用数据目录内的默认缓存位置。
         os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
         os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
         matplotlib_cache = settings.logs_dir / "matplotlib"
@@ -95,9 +96,11 @@ class FaceEngine:
             name="buffalo_l",
             root=str(settings.data_dir),
             providers=list(backend.providers),
+            # 应用不使用年龄、性别等附加模型，限制模块可缩短加载时间并减少模型依赖。
             allowed_modules=["detection", "recognition"],
         )
         analyzer.prepare(ctx_id=backend.context_id, det_size=(640, 640))
+        # ORT 可能没有把 CUDA 设为 session 首选 provider，因此按已创建 session 修正后端标记。
         actual_backend = actual_backend_for_analyzer(analyzer, backend)
         return cls(analyzer=analyzer, backend=actual_backend)
 
@@ -135,6 +138,7 @@ class FaceEngine:
         bboxes, keypoints = detector.detect(frame, max_num=0, metric="default")
         detected: list[DetectedFace] = []
         for index, row in enumerate(np.asarray(bboxes)):
+            # InsightFace 的有效检测行应至少包含四个框坐标和一个置信度。
             if row.size < 5:
                 continue
             bbox = tuple(float(value) for value in row[:4])
@@ -146,6 +150,7 @@ class FaceEngine:
                 DetectedFace(
                     bbox=normalized_bbox,
                     detection_score=float(row[4]),
+                    # 只测人脸区域的清晰度，避免背景纹理把模糊人脸误判为清晰。
                     blur_variance=self._blur_metric(_face_crop(frame, normalized_bbox)),
                     landmarks=landmarks,
                 )
@@ -184,6 +189,7 @@ class FaceEngine:
         recognizer = models.get("recognition") if isinstance(models, dict) else None
         if recognizer is None:
             raise RuntimeError("InsightFace recognition model is unavailable")
+        # 用可写轻量对象提供对齐关键点并承接回写特征，避免业务层依赖厂商 Face 类型。
         vendor_face = SimpleNamespace(
             bbox=np.asarray(detected_face.bbox, dtype=np.float32),
             det_score=detected_face.detection_score,
@@ -211,6 +217,7 @@ def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
     if vector.ndim != 1 or vector.size == 0 or norm == 0.0:
         raise FaceInputError("invalid_embedding")
+    # 单位向量使后续点积等价于余弦相似度，也统一多样本均值的尺度。
     return vector / norm
 
 

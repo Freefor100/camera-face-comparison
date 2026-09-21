@@ -41,6 +41,7 @@ class FaceRepository:
         """
         self._connection = sqlite3.connect(database_path, timeout=5.0)
         self._connection.row_factory = sqlite3.Row
+        # 外键保护逻辑关系，WAL 允许界面读取与工作线程写日志并行，busy_timeout 吸收短暂写竞争。
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._connection.execute("PRAGMA journal_mode = WAL")
         self._connection.execute("PRAGMA busy_timeout = 5000")
@@ -80,6 +81,7 @@ class FaceRepository:
             display_name=normalized_name,
             created_at=_now(),
         )
+        # 进入事务前先完成全部向量校验和哈希，避免持有 SQLite 写锁时做纯计算。
         prepared_samples = [
             self._make_sample(
                 person_id=person.id,
@@ -119,6 +121,7 @@ class FaceRepository:
 
         if not samples:
             raise ValueError("at least one sample is required")
+        # 先把所有输入转换为领域对象，任一向量无效时数据库不会开始部分写入。
         prepared_samples = [
             self._make_sample(
                 person_id=person_id,
@@ -234,6 +237,7 @@ class FaceRepository:
                 (person_id,),
             ).fetchall()
             removed_samples = [self._sample_from_row(row) for row in rows]
+            # 样本外键使用 RESTRICT，因此必须先删子表；日志外键会在删人员时自动置空。
             self._connection.execute(
                 "DELETE FROM face_samples WHERE person_id = ?", (person_id,)
             )
@@ -334,6 +338,7 @@ class FaceRepository:
     def _initialize_schema(self) -> None:
         """创建当前版本的人员、样本和识别日志表。"""
         with self._connection:
+            # CREATE IF NOT EXISTS 只负责全新数据库；随后仍需精确核对列，拒绝旧开发库继续运行。
             self._connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS persons (
@@ -427,6 +432,7 @@ class FaceRepository:
         vector = np.asarray(embedding, dtype=np.float32)
         if vector.ndim != 1 or vector.size == 0:
             raise ValueError("embedding must be a non-empty one-dimensional vector")
+        # 哈希基于最终入库的 float32 字节，完整性检查可直接复算而不受输入 dtype 影响。
         return FaceSample(
             id=str(uuid4()),
             person_id=person_id,
@@ -479,6 +485,7 @@ class FaceRepository:
     @staticmethod
     def _sample_from_row(row: sqlite3.Row) -> FaceSample:
         """把 SQLite 行恢复为样本对象并校验特征维度。"""
+        # copy() 解除数组对 SQLite BLOB 缓冲区的只读视图依赖，返回值可安全独立持有。
         embedding = np.frombuffer(row["embedding_blob"], dtype=np.float32).copy()
         if embedding.size != row["embedding_dim"]:
             raise ValueError(f"stored embedding {row['id']} has an invalid dimension")
@@ -509,6 +516,7 @@ class FaceRepository:
     @contextmanager
     def _write_transaction(self) -> Generator[None, None, None]:
         """以 `BEGIN IMMEDIATE` 提供单写事务，并在异常时回滚。"""
+        # 提前取得保留写锁，使并发写冲突发生在事务入口，而不是多条语句执行到一半时。
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             yield

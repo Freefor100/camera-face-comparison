@@ -242,6 +242,7 @@ class MainWindow(QMainWindow):
             return
         request_started_at = perf_counter()
         self._recognition_started_at = request_started_at
+        # 点击瞬间先复制当前帧并启动工作线程，避免等待定时采集完成后才开始第一帧检测。
         first_input = ImageInput.from_camera(self._current_frame)
         self._captured_frames = [first_input]
         self._busy = True
@@ -281,6 +282,7 @@ class MainWindow(QMainWindow):
             database_path=self._settings.database_path,
             settings=self._settings,
             face_engine=self._face_engine,
+            # 整个五帧窗口固定使用同一标准库版本，避免采集中途刷新导致候选集合变化。
             library_snapshot=self._face_library.snapshot(),
             frame_count=CAMERA_FRAME_COUNT,
             started_at=started_at,
