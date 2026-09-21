@@ -33,6 +33,10 @@ QPushButton {
 QPushButton:hover { background: #2a385c; border-color: #7084d9; }
 QPushButton:pressed { background: #18213a; }
 QPushButton:disabled { background: #151c30; border-color: #222c46; color: #65708b; }
+QPushButton[role="danger"] { color: #ff9aa5; border-color: #6a3545; }
+QPushButton[role="danger"]:hover { background: #402032; border-color: #c65b70; }
+#compactActionButton { padding: 6px 10px; min-height: 18px; }
+#sampleDeleteButton { padding: 6px 10px; font-size: 12px; }
 QComboBox, QLineEdit {
     background: #131b30;
     border: 1px solid #344467;

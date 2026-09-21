@@ -120,3 +120,92 @@ def test_repository_rejects_the_same_image_for_one_person(tmp_path) -> None:
 
     assert len(repository.list_samples("alice-id")) == 1
     repository.close()
+
+
+def test_repository_renames_existing_person_without_changing_identity(tmp_path) -> None:
+    """修改姓名时必须保留人员编号和已有样本。"""
+
+    repository = FaceRepository(tmp_path / "face_library.sqlite")
+    repository.create_person_with_samples(
+        person_id="alice-id",
+        display_name="Alice",
+        samples=[_sample_input(np.array([1.0, 0.0], dtype=np.float32))],
+    )
+
+    renamed = repository.rename_person("alice-id", "  Alice Zhang  ")
+
+    assert renamed.id == "alice-id"
+    assert renamed.display_name == "Alice Zhang"
+    assert repository.get_person("alice-id") == renamed
+    assert len(repository.list_samples("alice-id")) == 1
+    repository.close()
+
+
+def test_repository_deletes_one_sample_but_refuses_to_delete_the_last_sample(
+    tmp_path,
+) -> None:
+    """删除样本后人员仍须至少保留一张可用于识别的图片。"""
+
+    repository = FaceRepository(tmp_path / "face_library.sqlite")
+    repository.create_person_with_samples(
+        person_id="alice-id",
+        display_name="Alice",
+        samples=[
+            _sample_input(
+                np.array([1.0, 0.0], dtype=np.float32),
+                image_path="faces/alice/first.jpg",
+            ),
+            SampleInput(
+                image_path="faces/alice/second.jpg",
+                embedding=np.array([0.8, 0.2], dtype=np.float32),
+                quality_metrics={"face_size_px": 150.0},
+                source_type="file",
+                image_sha256="b" * 64,
+            ),
+        ],
+    )
+    first, second = repository.list_samples("alice-id")
+
+    removed = repository.delete_sample("alice-id", first.id)
+
+    assert removed.id == first.id
+    assert [sample.id for sample in repository.list_samples("alice-id")] == [second.id]
+    with pytest.raises(ValueError, match="最后一张样本"):
+        repository.delete_sample("alice-id", second.id)
+    assert [sample.id for sample in repository.list_samples("alice-id")] == [second.id]
+    repository.close()
+
+
+def test_repository_deletes_person_samples_and_detaches_recognition_history(
+    tmp_path,
+) -> None:
+    """删除人员必须清除其样本，并保留不再指向该人员的历史日志。"""
+
+    repository = FaceRepository(tmp_path / "face_library.sqlite")
+    repository.create_person_with_samples(
+        person_id="alice-id",
+        display_name="Alice",
+        samples=[_sample_input(np.array([1.0, 0.0], dtype=np.float32))],
+    )
+    repository.record_recognition(
+        decision="matched",
+        person_id="alice-id",
+        top_score=0.8,
+        second_score=None,
+        score_gap=None,
+        acceptance_score=0.8,
+        acceptance_rule="score_threshold",
+        latency_ms=20.0,
+        reason=None,
+    )
+
+    removed_samples = repository.delete_person("alice-id")
+    log_person_id = repository._connection.execute(
+        "SELECT person_id FROM recognition_logs"
+    ).fetchone()[0]
+
+    assert len(removed_samples) == 1
+    assert repository.get_person("alice-id") is None
+    assert repository.list_samples("alice-id") == []
+    assert log_person_id is None
+    repository.close()

@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 
 from camera_face_comparison.camera import CameraDevice
 from camera_face_comparison.config import load_settings
@@ -264,6 +264,111 @@ def test_library_sample_cards_reflow_and_hide_internal_source(tmp_path, qapplica
     page.close()
 
 
+def test_library_page_exposes_person_and_sample_management_actions(
+    tmp_path,
+    qapplication,
+) -> None:
+    """选中人员后应能修改姓名、删除人员或请求删除指定样本。"""
+
+    person = Person(id="alice", display_name="Alice", created_at=datetime.now(UTC))
+    sample = FaceSample(
+        id="sample-1",
+        person_id=person.id,
+        image_path="missing.jpg",
+        embedding=np.array([1.0, 0.0], dtype=np.float32),
+        quality_metrics={},
+        created_at=datetime.now(UTC),
+        source_type="file",
+    )
+    page = LibraryPage(tmp_path)
+    requested_samples: list[str] = []
+    page.delete_sample_requested.connect(requested_samples.append)
+
+    page.set_people([person], {person.id: (sample,)})
+    page.set_management_enabled(True)
+
+    assert page.rename_person_button.text() == "修改姓名"
+    assert page.delete_person_button.text() == "删除人员"
+    delete_buttons = page.findChildren(QPushButton, "sampleDeleteButton")
+    assert len(delete_buttons) == 1
+    delete_buttons[0].click()
+    assert requested_samples == ["sample-1"]
+    page.close()
+
+
+def test_main_window_management_keeps_database_files_and_memory_in_sync(
+    tmp_path,
+    qapplication,
+    monkeypatch,
+) -> None:
+    """改名和删除操作完成后，数据库、受管图片及内存矩阵必须同步刷新。"""
+
+    settings = load_settings(tmp_path)
+    person_dir = settings.faces_dir / "alice"
+    person_dir.mkdir(parents=True)
+    first_path = person_dir / "first.jpg"
+    second_path = person_dir / "second.jpg"
+    first_path.write_bytes(b"first")
+    second_path.write_bytes(b"second")
+    repository = FaceRepository(settings.database_path)
+    repository.create_person_with_samples(
+        person_id="alice",
+        display_name="Alice",
+        samples=[
+            SampleInput(
+                image_path="faces/alice/first.jpg",
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                quality_metrics={},
+                image_sha256=hashlib.sha256(first_path.read_bytes()).hexdigest(),
+            ),
+            SampleInput(
+                image_path="faces/alice/second.jpg",
+                embedding=np.array([0.0, 1.0], dtype=np.float32),
+                quality_metrics={},
+                image_sha256=hashlib.sha256(second_path.read_bytes()).hexdigest(),
+            ),
+        ],
+    )
+    first_sample_id = repository.list_samples("alice")[0].id
+    repository.close()
+    window = MainWindow(
+        settings=settings,
+        face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
+        camera=FakeCamera(),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        main_window_module.QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("Alice Zhang", True),
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    window.rename_selected_person()
+
+    renamed = window._repository.get_person("alice")
+    assert renamed is not None and renamed.display_name == "Alice Zhang"
+    assert window._face_library.snapshot().display_names == ("Alice Zhang",)
+
+    window.delete_selected_sample(first_sample_id)
+
+    assert not first_path.exists()
+    assert second_path.exists()
+    assert len(window._repository.list_samples("alice")) == 1
+    assert np.allclose(window._face_library.snapshot().prototype_matrix[0], [0.0, 1.0])
+
+    window.delete_selected_person()
+
+    assert window._repository.get_person("alice") is None
+    assert window._face_library.snapshot().person_ids == ()
+    assert not second_path.exists()
+    assert not person_dir.exists()
+    window.close()
+
+
 def test_switching_people_detaches_previous_sample_cards(tmp_path, qapplication) -> None:
     """切换人员时应立即移除旧样本卡片，避免短暂重叠显示。"""
 
@@ -361,6 +466,7 @@ def test_camera_recognition_collects_fixed_five_frame_window(tmp_path, qapplicat
         face_engine=FakeFaceEngine(),  # type: ignore[arg-type]
         camera=FakeCamera(),  # type: ignore[arg-type]
     )
+    window._camera_preview_active = True
     window.on_frame(np.zeros((120, 160, 3), dtype=np.uint8))
     started: list[tuple[object, float]] = []
     submitted: list[object] = []

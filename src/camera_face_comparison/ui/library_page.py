@@ -62,6 +62,9 @@ class LibraryPage(QWidget):
     create_from_camera_requested = Signal()
     append_files_requested = Signal()
     append_camera_requested = Signal()
+    rename_person_requested = Signal()
+    delete_person_requested = Signal()
+    delete_sample_requested = Signal(str)
     recheck_requested = Signal()
 
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
@@ -76,6 +79,8 @@ class LibraryPage(QWidget):
         self._people: tuple[Person, ...] = ()
         self._samples_by_person: dict[str, tuple[FaceSample, ...]] = {}
         self._sample_cards: list[QWidget] = []
+        self._sample_delete_buttons: list[QPushButton] = []
+        self._management_enabled = False
         self._build()
 
     def _build(self) -> None:
@@ -153,11 +158,23 @@ class LibraryPage(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(8)
+        heading = QHBoxLayout()
         self.selected_name_label = QLabel("未选择人员")
         self.selected_name_label.setObjectName("detailTitle")
+        self.rename_person_button = QPushButton("修改姓名")
+        self.rename_person_button.setObjectName("compactActionButton")
+        self.delete_person_button = QPushButton("删除人员")
+        self.delete_person_button.setObjectName("compactActionButton")
+        self.delete_person_button.setProperty("role", "danger")
+        self.rename_person_button.clicked.connect(self.rename_person_requested)
+        self.delete_person_button.clicked.connect(self.delete_person_requested)
+        heading.addWidget(self.selected_name_label)
+        heading.addStretch(1)
+        heading.addWidget(self.rename_person_button)
+        heading.addWidget(self.delete_person_button)
         self.selected_count_label = QLabel("样本数 --")
         self.selected_count_label.setObjectName("metricText")
-        layout.addWidget(self.selected_name_label)
+        layout.addLayout(heading)
         layout.addWidget(self.selected_count_label)
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
@@ -176,6 +193,7 @@ class LibraryPage(QWidget):
         self.sample_scroll.setWidget(self.sample_container)
         self.sample_scroll.viewport().installEventFilter(self)
         layout.addWidget(self.sample_scroll, 1)
+        self._update_management_actions()
         return panel
 
     def set_people(
@@ -227,6 +245,7 @@ class LibraryPage(QWidget):
         if current is None:
             self.selected_name_label.setText("未选择人员")
             self.selected_count_label.setText("样本数 --")
+            self._update_management_actions()
             return
         person_id = str(current.data(Qt.UserRole))
         person = next((item for item in self._people if item.id == person_id), None)
@@ -238,6 +257,7 @@ class LibraryPage(QWidget):
         for index, sample in enumerate(samples):
             self._sample_cards.append(self._sample_card(sample, index))
         self._relayout_sample_cards()
+        self._update_management_actions()
 
     def _sample_card(self, sample: FaceSample, index: int) -> QWidget:
         """创建一个样本缩略图卡片；图片缺失时保留明确占位提示。"""
@@ -256,9 +276,36 @@ class LibraryPage(QWidget):
         caption = QLabel(f"样本 {index + 1}")
         caption.setObjectName("sampleCaption")
         caption.setAlignment(Qt.AlignCenter)
+        delete_button = QPushButton("删除样本")
+        delete_button.setObjectName("sampleDeleteButton")
+        delete_button.setProperty("role", "danger")
+        delete_button.clicked.connect(
+            lambda _checked=False, sample_id=sample.id: self.delete_sample_requested.emit(
+                sample_id
+            )
+        )
+        delete_button.setEnabled(self._management_enabled)
+        self._sample_delete_buttons.append(delete_button)
         card_layout.addWidget(image_label)
         card_layout.addWidget(caption)
+        card_layout.addWidget(delete_button)
         return card
+
+    def set_management_enabled(self, enabled: bool) -> None:
+        """按标准库完整性和任务状态启用或禁用修改、删除操作。"""
+
+        self._management_enabled = enabled
+        self._update_management_actions()
+
+    def _update_management_actions(self) -> None:
+        """根据当前选择和全局状态刷新管理按钮。"""
+
+        has_selection = self._selected_person_id() is not None
+        enabled = self._management_enabled and has_selection
+        self.rename_person_button.setEnabled(enabled)
+        self.delete_person_button.setEnabled(enabled)
+        for button in self._sample_delete_buttons:
+            button.setEnabled(enabled)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """详情区宽度变化时重新计算样本列数。"""
@@ -295,3 +342,4 @@ class LibraryPage(QWidget):
             card.setParent(None)
             card.deleteLater()
         self._sample_cards.clear()
+        self._sample_delete_buttons.clear()

@@ -133,6 +133,111 @@ class FaceRepository:
                 self._insert_sample(sample)
         return prepared_samples
 
+    def rename_person(self, person_id: str, display_name: str) -> Person:
+        """修改已有人员的显示姓名，并保留人员编号和创建时间。
+
+        参数：
+            person_id：需要修改的人员编号。
+            display_name：去除首尾空白后的新显示姓名。
+        返回：
+            修改后的人员对象。
+        前置条件：
+            人员必须存在，新姓名不能为空且不能与其他人员重名。
+        """
+
+        normalized_name = display_name.strip()
+        if not normalized_name:
+            raise ValueError("人员姓名不能为空")
+        with self._write_transaction():
+            row = self._connection.execute(
+                "SELECT id, display_name, created_at FROM persons WHERE id = ?",
+                (person_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("人员不存在")
+            try:
+                self._connection.execute(
+                    "UPDATE persons SET display_name = ? WHERE id = ?",
+                    (normalized_name, person_id),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("该姓名已经存在") from error
+        return Person(
+            id=str(row["id"]),
+            display_name=normalized_name,
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    def delete_sample(self, person_id: str, sample_id: str) -> FaceSample:
+        """删除指定人员的一张样本，但禁止删除该人员的最后一张样本。
+
+        参数：
+            person_id：样本所属人员编号。
+            sample_id：待删除样本编号。
+        返回：
+            已从数据库删除的样本，供调用方继续清理对应图片文件。
+        前置条件：
+            样本必须属于指定人员，并且该人员至少有两张样本。
+        """
+
+        with self._write_transaction():
+            rows = self._connection.execute(
+                """
+                SELECT id, person_id, image_path, embedding_blob, embedding_dim,
+                       quality_metrics_json, created_at, source_type, image_sha256,
+                       embedding_sha256
+                FROM face_samples
+                WHERE person_id = ?
+                ORDER BY created_at
+                """,
+                (person_id,),
+            ).fetchall()
+            selected = next((row for row in rows if row["id"] == sample_id), None)
+            if selected is None:
+                raise ValueError("样本不存在或不属于所选人员")
+            if len(rows) <= 1:
+                raise ValueError("不能删除人员的最后一张样本，请删除整个人员")
+            self._connection.execute(
+                "DELETE FROM face_samples WHERE id = ? AND person_id = ?",
+                (sample_id, person_id),
+            )
+        return self._sample_from_row(selected)
+
+    def delete_person(self, person_id: str) -> list[FaceSample]:
+        """删除人员及其全部样本，并保留已与人员解绑的识别历史。
+
+        参数：
+            person_id：待删除人员编号。
+        返回：
+            已删除的样本列表，供调用方清理对应图片文件。
+        前置条件：
+            人员必须存在。
+        """
+
+        with self._write_transaction():
+            exists = self._connection.execute(
+                "SELECT 1 FROM persons WHERE id = ?", (person_id,)
+            ).fetchone()
+            if exists is None:
+                raise ValueError("人员不存在")
+            rows = self._connection.execute(
+                """
+                SELECT id, person_id, image_path, embedding_blob, embedding_dim,
+                       quality_metrics_json, created_at, source_type, image_sha256,
+                       embedding_sha256
+                FROM face_samples
+                WHERE person_id = ?
+                ORDER BY created_at
+                """,
+                (person_id,),
+            ).fetchall()
+            removed_samples = [self._sample_from_row(row) for row in rows]
+            self._connection.execute(
+                "DELETE FROM face_samples WHERE person_id = ?", (person_id,)
+            )
+            self._connection.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+        return removed_samples
+
     def sqlite_integrity_messages(self) -> tuple[str, ...]:
         """返回 SQLite 完整性检查结果，不修改数据库内容。"""
 

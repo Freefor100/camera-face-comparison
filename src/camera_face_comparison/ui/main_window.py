@@ -22,6 +22,7 @@ from ..face_engine import FaceEngine
 from ..face_library import InMemoryFaceLibrary
 from ..image_input import ImageInput
 from ..integrity import verify_library
+from ..library_management import LibraryDeletionResult, LibraryManagementService
 from ..repository import FaceRepository
 from .library_page import LibraryPage
 from .recognition_page import RecognitionPage
@@ -64,6 +65,7 @@ class MainWindow(QMainWindow):
         self._face_engine = face_engine
         self._camera = camera
         self._repository = FaceRepository(settings.database_path)
+        self._library_management = LibraryManagementService(self._repository, settings)
         self._face_library = InMemoryFaceLibrary.empty()
         self._library_valid = False
         self._busy = False
@@ -96,6 +98,9 @@ class MainWindow(QMainWindow):
         self._library_page.append_camera_requested.connect(
             self.append_sample_to_selected_person
         )
+        self._library_page.rename_person_requested.connect(self.rename_selected_person)
+        self._library_page.delete_person_requested.connect(self.delete_selected_person)
+        self._library_page.delete_sample_requested.connect(self.delete_selected_sample)
         self._library_page.recheck_requested.connect(self.recheck_library)
 
         # 保留主窗口对关键控件的直接引用，业务方法只负责协调页面和服务。
@@ -123,6 +128,8 @@ class MainWindow(QMainWindow):
         self.add_person_button = self._library_page.add_person_button
         self.append_local_button = self._library_page.append_local_button
         self.append_sample_button = self._library_page.append_sample_button
+        self.rename_person_button = self._library_page.rename_person_button
+        self.delete_person_button = self._library_page.delete_person_button
         self.recheck_library_button = self._library_page.recheck_library_button
 
         tabs = QTabWidget()
@@ -500,6 +507,137 @@ class MainWindow(QMainWindow):
             person_id=person_id,
         )
 
+    def rename_selected_person(self) -> None:
+        """修改当前选中人员的显示姓名，并同步刷新内存标准库。"""
+
+        person_id = self._selected_person_id()
+        if person_id is None:
+            return
+        person = self._repository.get_person(person_id)
+        if person is None:
+            QMessageBox.warning(self, "修改失败", "所选人员已经不存在，请刷新标准库。")
+            return
+        display_name, accepted = QInputDialog.getText(
+            self,
+            "修改姓名",
+            "人员姓名：",
+            text=person.display_name,
+        )
+        if not accepted:
+            return
+        self._busy = True
+        self._set_task_buttons_enabled(False)
+        try:
+            renamed = self._library_management.rename_person(person_id, display_name)
+            self.recheck_library(refreshed_person_id=person_id)
+            self.status_label.setText(f"人员姓名已修改为“{renamed.display_name}”。")
+        except (OSError, RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "修改失败", str(error))
+            self.status_label.setText(f"修改姓名失败：{error}")
+        finally:
+            self._busy = False
+            self._set_task_buttons_enabled(self._library_valid)
+
+    def delete_selected_sample(self, sample_id: str) -> None:
+        """确认后删除所选人员的一张非末尾样本，并刷新人员原型。"""
+
+        person_id = self._selected_person_id()
+        if person_id is None:
+            return
+        samples = self._repository.list_samples(person_id)
+        sample_index = next(
+            (index for index, sample in enumerate(samples, start=1) if sample.id == sample_id),
+            None,
+        )
+        if sample_index is None:
+            QMessageBox.warning(self, "删除失败", "所选样本已经不存在，请刷新标准库。")
+            return
+        if len(samples) <= 1:
+            QMessageBox.information(
+                self,
+                "保留最后一张样本",
+                "人员必须至少保留一张样本。如需移除该身份，请使用“删除人员”。",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "删除样本",
+            f"确定删除样本 {sample_index} 吗？此操作无法撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._busy = True
+        self._set_task_buttons_enabled(False)
+        try:
+            result = self._library_management.delete_sample(person_id, sample_id)
+            self.recheck_library(refreshed_person_id=person_id)
+            self.status_label.setText(
+                self._deletion_message("样本已删除。", result)
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "删除失败", str(error))
+            self.status_label.setText(f"删除样本失败：{error}")
+        finally:
+            self._busy = False
+            self._set_task_buttons_enabled(self._library_valid)
+
+    def delete_selected_person(self) -> None:
+        """确认后删除所选人员及其全部样本，并移出内存标准库。"""
+
+        person_id = self._selected_person_id()
+        if person_id is None:
+            return
+        person = self._repository.get_person(person_id)
+        if person is None:
+            QMessageBox.warning(self, "删除失败", "所选人员已经不存在，请刷新标准库。")
+            return
+        sample_count = len(self._repository.list_samples(person_id))
+        answer = QMessageBox.question(
+            self,
+            "删除人员",
+            (
+                f"确定删除“{person.display_name}”及其 {sample_count} 张样本吗？"
+                "历史识别日志会保留，但此操作无法撤销。"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._busy = True
+        self._set_task_buttons_enabled(False)
+        try:
+            result = self._library_management.delete_person(person_id)
+            self.recheck_library(refreshed_person_id=person_id)
+            self.status_label.setText(
+                self._deletion_message(
+                    f"“{person.display_name}”已从标准库删除。",
+                    result,
+                )
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "删除失败", str(error))
+            self.status_label.setText(f"删除人员失败：{error}")
+        finally:
+            self._busy = False
+            self._set_task_buttons_enabled(self._library_valid)
+
+    @staticmethod
+    def _deletion_message(
+        success_message: str,
+        result: LibraryDeletionResult,
+    ) -> str:
+        """生成删除成功提示，并如实报告未清理的无引用图片。"""
+
+        if not result.cleanup_failures:
+            return success_message
+        return (
+            f"{success_message} 数据库已经更新，但有 "
+            f"{len(result.cleanup_failures)} 个无引用图片文件未能清理。"
+        )
+
     def _start_enrollment(
         self,
         *,
@@ -659,6 +797,7 @@ class MainWindow(QMainWindow):
             self.append_sample_button,
         ):
             button.setEnabled(enabled)
+        self._library_page.set_management_enabled(enabled)
         self.compare_button.setEnabled(enabled and self._camera_worker is not None)
 
     def _render_frame(
