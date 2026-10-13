@@ -616,6 +616,7 @@ class FaceRepository:
             except sqlite3.Error as rollback_error:
                 # 结果不明时隔离连接，并通知图片补偿保留现场，不能把潜在已提交图片删掉。
                 self.transaction_uncertain = True
+                error.library_state_uncertain = True
                 error.add_note(f"回滚失败，已隔离连接：{rollback_error}")
                 try:
                     self._connection.close()

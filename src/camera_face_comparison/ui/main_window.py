@@ -134,6 +134,10 @@ class MainWindow(QMainWindow):
         self._recognition_page.set_integrity_state(
             "数据：" + labels[state.library], warning=state.library != "healthy"
         )
+        self.integrity_label.setToolTip(
+            "这是最近一次检查的结果，不是实时监控。" if state.library == "healthy" else
+            "请在标准人脸库页查看诊断原因并重新检查。"
+        )
         if self.controller.catalog is None:
             self._recognition_page.library_summary_label.setText("标准库：--")
         if state.closing:

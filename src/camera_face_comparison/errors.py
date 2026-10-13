@@ -24,6 +24,11 @@ class TaskFailure:
 def classify_error(error: Exception, *, scope="system") -> TaskFailure:
     """按实际 SQLite 错误码和操作范围分类，锁竞争不等于损坏。"""
     detail = "；".join([str(error), *getattr(error, "__notes__", [])])
+    # 回滚失败会改变原业务异常的处理边界，保留原异常详情但必须要求复查。
+    if getattr(error, "library_state_uncertain", False):
+        return TaskFailure(
+            "storage_unavailable", "数据库事务结果不明，已暂停识别和修改，请重新检查。", detail
+        )
     if isinstance(error, OperationCancelled):
         return TaskFailure("cancelled", "操作已取消。", detail)
     from .face_engine import FaceInputError

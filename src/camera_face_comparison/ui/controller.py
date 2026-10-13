@@ -203,7 +203,8 @@ class TaskController(QObject):
             self.result_ready.emit(outcome)
             self.backend_changed.emit(getattr(self.engine, "backend", None))
             return
-        if outcome.committed:
+        # 复查也可能发布外部修改后的库，旧判定不能冒充新标准库的结果。
+        if outcome.committed or outcome.snapshot is not None:
             self.result_reset.emit()
         if outcome.report is not None:
             self.catalog = outcome.report
@@ -233,6 +234,7 @@ class TaskController(QObject):
     def _invalidate(self, state):
         """撤销健康标记并发布空矩阵，旧快照不会原地改变。"""
         self.face_library.clear()
+        self.result_reset.emit()
         self._set_state(library=state)
 
     def _on_error(self, task_id, failure):

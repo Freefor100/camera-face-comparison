@@ -80,7 +80,7 @@ def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVer
             digest = hashlib.sha256(sample.embedding.astype(np.float32).tobytes()).hexdigest()
             if sample.embedding_sha256 != digest:
                 failures.append(IntegrityFailure("embedding_hash_mismatch", sample_id, sample_id))
-        except (ValueError, TypeError, AttributeError, OSError) as error:
+        except (ValueError, TypeError, AttributeError, OverflowError, OSError) as error:
             failures.append(IntegrityFailure("invalid_sample", str(error), sample_id))
     for person in people:
         vectors = grouped.get(person.id, [])

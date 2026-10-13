@@ -129,3 +129,35 @@ def test_missing_database_with_existing_photos_is_not_silently_recreated(tmp_pat
     with pytest.raises(RuntimeError):
         FaceRepository(tmp_path / "library.sqlite")
     assert not (tmp_path / "library.sqlite").exists()
+
+
+def test_quality_overflow_does_not_abort_other_sample_diagnostics(tmp_path):
+    """一条质量记录溢出不能遮蔽另一条坏向量的诊断。"""
+    import json
+
+    from camera_face_comparison.config import load_settings
+    from camera_face_comparison.integrity import verify_library
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    repository.create_person_with_samples(
+        person_id="person",
+        display_name="测试",
+        samples=[sample(), sample("faces/person/second.jpg")],
+    )
+    first, second = repository.list_samples()
+    repository._connection.execute(
+        "UPDATE face_samples SET quality_metrics_json=? WHERE id=?",
+        (json.dumps({"brightness": 10**400}), first.id),
+    )
+    repository._connection.execute(
+        "UPDATE face_samples SET embedding_dim=511 WHERE id=?",
+        (second.id,),
+    )
+    repository._connection.commit()
+    report = verify_library(repository, settings)
+    assert {item.sample_id for item in report.failures if item.kind == "invalid_sample"} == {
+        first.id,
+        second.id,
+    }
+    repository.close()

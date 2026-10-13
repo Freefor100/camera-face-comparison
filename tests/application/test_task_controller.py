@@ -217,3 +217,72 @@ def test_late_task_error_and_late_camera_frame_cannot_change_current_view(tmp_pa
     assert window.preview_label.pixmap().isNull()
     assert "已打开" not in window._recognition_page.device_status_label.text()
     window.close()
+
+
+def test_rollback_uncertainty_disables_business_until_recheck(tmp_path, app, monkeypatch):
+    """业务冲突后的回滚失败必须撤销健康状态，而不是仅提示重复图片。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    image = ImageInput.from_camera(np.full((180, 180, 3), 120, dtype=np.uint8))
+    window.controller.library_operation("create", name="测试", inputs=(image,))
+    wait_for(app, lambda: window.controller.idle)
+    person = window.controller.catalog.people[0]
+
+    class RollbackFailingRepository(FaceRepository):
+        """只拒绝真实 SQLite 回滚，保留正常读取和业务重复检查。"""
+
+        def __init__(self, path):
+            """在事务执行前安装故障注入。"""
+            super().__init__(path)
+            self._connection.set_authorizer(
+                lambda action, value, *_: (
+                    sqlite3.SQLITE_DENY
+                    if action == sqlite3.SQLITE_TRANSACTION and value == "ROLLBACK"
+                    else sqlite3.SQLITE_OK
+                )
+            )
+
+    monkeypatch.setattr(
+        "camera_face_comparison.ui.workers.FaceRepository", RollbackFailingRepository
+    )
+    window.controller.library_operation("append", person_id=person.id, inputs=(image,))
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        assert not window.controller.library_valid
+        assert not window.import_compare_button.isEnabled()
+        assert "回滚失败" in window._diagnostic_detail
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_recheck_clears_result_from_previous_library_snapshot(tmp_path, app):
+    """另一个连接修改姓名后复查，不能留下原标准库的判定卡片。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    window.controller.library_operation(
+        "create",
+        name="原姓名",
+        inputs=(ImageInput.from_camera(np.full((180, 180, 3), 120, dtype=np.uint8)),),
+    )
+    wait_for(app, lambda: window.controller.idle)
+    sample = window.controller.catalog.metadata[0]
+    window.controller.recognize_file(tmp_path / sample.image_path)
+    wait_for(app, lambda: window.controller.idle)
+    assert window.result_label.property("state") == "matched"
+    repository = FaceRepository(window.controller.settings.database_path)
+    repository.rename_person(sample.person_id, "新姓名")
+    repository.close()
+    window.recheck_library()
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        assert window.controller.catalog.people[0].display_name == "新姓名"
+        assert window.result_label.property("state") == "idle"
+        assert window.result_preview_label.pixmap().isNull()
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)

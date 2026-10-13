@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..domain import FaceSample, Person
+from ..domain import Person, SampleMetadata
 from .thumbnails import ThumbnailLoader
 
 SAMPLE_CARD_TARGET_WIDTH = 176
@@ -89,7 +89,7 @@ class LibraryPage(QWidget):
         self.setObjectName("libraryPage")
         self._data_dir = data_dir
         self._people: tuple[Person, ...] = ()
-        self._samples_by_person: dict[str, tuple[FaceSample, ...]] = {}
+        self._samples_by_person: dict[str, tuple[SampleMetadata, ...]] = {}
         self._sample_cards: list[QWidget] = []
         self._sample_delete_buttons: list[QPushButton] = []
         self._management_enabled = False
@@ -224,7 +224,7 @@ class LibraryPage(QWidget):
     def set_people(
         self,
         people: list[Person],
-        samples_by_person: dict[str, tuple[FaceSample, ...]],
+        samples_by_person: dict[str, tuple[SampleMetadata, ...]],
     ) -> None:
         """更新人员列表和详情数据，并尽量保留当前选中人员。"""
         selected_id = self._selected_person_id()
@@ -286,7 +286,7 @@ class LibraryPage(QWidget):
         self._relayout_sample_cards()
         self._update_management_actions()
 
-    def _sample_card(self, sample: FaceSample, index: int) -> QWidget:
+    def _sample_card(self, sample: SampleMetadata, index: int) -> QWidget:
         """创建一个样本缩略图卡片；图片缺失时保留明确占位提示。"""
         card = QFrame()
         card.setObjectName("sampleCard")
@@ -301,10 +301,14 @@ class LibraryPage(QWidget):
         image_label = SampleThumbnail(QPixmap())
         image_label.setText("正在加载图片")
         self._image_labels[sample.id] = image_label
-        resolved = path.resolve()
-        if resolved.is_relative_to((self._data_dir / "faces").resolve()):
-            self.thumbnail_loader.request(resolved, sample.id, self._selection_generation)
-        else:
+        try:
+            resolved = path.resolve()
+            if resolved.is_relative_to((self._data_dir / "faces").resolve()):
+                self.thumbnail_loader.request(resolved, sample.id, self._selection_generation)
+            else:
+                image_label.setText("图片不可用")
+        except (ValueError, OSError):
+            # 诊断页仍展示可读元信息；坏路径不能阻断后续正常样本卡片。
             image_label.setText("图片不可用")
         caption = QLabel(f"样本 {index + 1}")
         caption.setObjectName("sampleCaption")
