@@ -115,8 +115,18 @@ def test_corrupt_sample_is_reported_and_deletion_does_not_decode_embedding(tmp_p
     report = verify_library(repository, settings)
     assert not report.is_valid
     assert any(item.kind == "invalid_sample" for item in report.failures)
+    repository._connection.set_authorizer(
+        lambda action, table, column, *_: (
+            sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_READ
+            and table == "face_samples"
+            and column in {"embedding_blob", "embedding_dim", "quality_metrics_json"}
+            else sqlite3.SQLITE_OK
+        )
+    )
     removed = repository.delete_sample("person", bad)
     assert removed.id == bad
+    repository._connection.set_authorizer(None)
     assert len(repository.list_samples()) == 1
     repository.close()
 
@@ -160,4 +170,90 @@ def test_quality_overflow_does_not_abort_other_sample_diagnostics(tmp_path):
         first.id,
         second.id,
     }
+    repository.close()
+
+
+def test_interleaved_commit_cannot_mix_people_and_sample_read_snapshots(tmp_path):
+    """另一连接在两次查询间提交，读取结果仍须属于同一时刻。"""
+    repository = FaceRepository(tmp_path / "library.sqlite")
+    repository.create_person_with_samples(person_id="a", display_name="甲", samples=[sample()])
+    other = FaceRepository(tmp_path / "library.sqlite")
+    committed = False
+
+    def insert_during_sample_query(query):
+        """在人员已读完、样本即将读取时插入一次独立提交。"""
+        nonlocal committed
+        if "FROM face_samples" in query and not committed:
+            committed = True
+            other.create_person_with_samples(
+                person_id="b",
+                display_name="乙",
+                samples=[sample("faces/b/sample.jpg")],
+            )
+
+    repository._connection.set_trace_callback(insert_during_sample_query)
+    people, samples, checks, foreign_keys = repository.read_library_rows()
+    repository._connection.set_trace_callback(None)
+    assert committed
+    assert {row["id"] for row in people} == {"a"}
+    assert {row["person_id"] for row in samples} == {"a"}
+    assert checks == ("ok",) and foreign_keys == ()
+    assert len(repository.list_people()) == 2
+    other.close()
+    repository.close()
+
+
+def test_append_cleanup_failure_keeps_original_error_and_existing_files(tmp_path, monkeypatch):
+    """一项文件补偿失败不能跳过其他文件或覆盖原业务异常。"""
+    from pathlib import Path
+
+    from camera_face_comparison.config import load_settings
+    from camera_face_comparison.enrollment import EnrollmentService
+    from camera_face_comparison.image_input import ImageInput
+    from tests.application.test_enrollment import FakeFaceEngine, _save_image
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    service = EnrollmentService(
+        repository=repository,
+        settings=settings,
+        face_engine=FakeFaceEngine(),
+        image_saver=_save_image,
+    )
+    image = ImageInput.from_camera(np.zeros((200, 200, 3), dtype=np.uint8))
+    person = service.create_from_inputs("测试", [image])
+    old_path = settings.data_dir / repository.list_samples(person.id)[0].image_path
+    unlink = Path.unlink
+
+    def fail_one_unlink(path, *args, **kwargs):
+        """仅阻断本次追加的第一张图片清理。"""
+        if path != old_path and path.parent.name == person.id and path.name.endswith("_001.jpg"):
+            raise PermissionError("补偿清理注入故障")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_one_unlink)
+    with pytest.raises(ValueError) as caught:
+        service.append_from_inputs(person.id, [image, image])
+    assert "补偿清理注入故障" not in str(caught.value)
+    assert any("补偿清理注入故障" in note for note in caught.value.__notes__)
+    assert old_path.is_file()
+    assert len(repository.list_samples(person.id)) == 1
+    assert len(list(old_path.parent.glob("*.jpg"))) == 2
+    assert not repository._connection.in_transaction
+    repository.close()
+
+
+def test_database_lock_is_busy_not_corruption(tmp_path):
+    """真实写锁超时应提示忙碌，不误报标准库损坏。"""
+    from camera_face_comparison.errors import classify_error
+
+    repository = FaceRepository(tmp_path / "library.sqlite")
+    other = FaceRepository(tmp_path / "library.sqlite")
+    repository._connection.execute("PRAGMA busy_timeout=1")
+    other._connection.execute("BEGIN IMMEDIATE")
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        repository.create_person_with_samples(person_id="a", display_name="甲", samples=[sample()])
+    assert classify_error(caught.value).kind == "storage_busy"
+    other._connection.rollback()
+    other.close()
     repository.close()

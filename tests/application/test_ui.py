@@ -8,9 +8,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from camera_face_comparison.domain import FaceSample, Person, SampleMetadata
+from camera_face_comparison.domain import Person, SampleMetadata
 from camera_face_comparison.ui.library_page import LibraryPage
-from tests.application.helpers import embedding as production_embedding
 
 
 @pytest.fixture(scope="module")
@@ -26,13 +25,10 @@ def test_library_page_exposes_person_and_sample_management_actions(
     """选中人员后应能修改姓名、删除人员或请求删除指定样本。"""
 
     person = Person(id="alice", display_name="Alice", created_at=datetime.now(UTC))
-    sample = FaceSample(
+    sample = SampleMetadata(
         id="sample-1",
         person_id=person.id,
         image_path="missing.jpg",
-        embedding=production_embedding([1.0, 0.0]),
-        quality_metrics={},
-        created_at=datetime.now(UTC),
         source_type="file",
     )
     page = LibraryPage(tmp_path)
@@ -61,13 +57,11 @@ def test_switching_people_detaches_previous_sample_cards(tmp_path, qapplication)
     ]
     samples = {
         person.id: (
-            FaceSample(
+            SampleMetadata(
                 id=f"{person.id}-sample",
                 person_id=person.id,
                 image_path="missing.jpg",
-                embedding=production_embedding([1.0, 0.0]),
-                quality_metrics={},
-                created_at=created_at,
+                source_type="file",
             ),
         )
         for person in people
@@ -93,4 +87,19 @@ def test_invalid_path_keeps_its_placeholder_and_other_sample_cards(tmp_path, qap
     page.set_people([person], {person.id: samples})
     assert len(page._sample_cards) == 2
     assert page._image_labels["bad"].text() == "图片不可用"
+    page.close()
+
+
+def test_library_sample_cards_reflow_with_available_width(tmp_path, qapplication):
+    """样本卡片按可用宽度重排，窄窗口至少保留一列。"""
+    person = Person(id="alice", display_name="测试", created_at=datetime.now(UTC))
+    samples = tuple(
+        SampleMetadata(str(i), person.id, f"faces/missing-{i}.jpg", "file") for i in range(5)
+    )
+    page = LibraryPage(tmp_path)
+    page.set_people([person], {person.id: samples})
+    page._relayout_sample_cards(150)
+    assert {page.sample_grid.getItemPosition(i)[1] for i in range(5)} == {0}
+    page._relayout_sample_cards(720)
+    assert max(page.sample_grid.getItemPosition(i)[1] for i in range(5)) >= 2
     page.close()

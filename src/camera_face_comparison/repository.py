@@ -205,9 +205,7 @@ class FaceRepository:
         with self._write_transaction():
             rows = self._connection.execute(
                 """
-                SELECT id, person_id, image_path, embedding_blob, embedding_dim,
-                       quality_metrics_json, created_at, source_type, image_sha256,
-                       embedding_sha256
+                SELECT id, person_id, image_path, source_type
                 FROM face_samples
                 WHERE person_id = ?
                 ORDER BY created_at
@@ -246,9 +244,7 @@ class FaceRepository:
                 raise ValueError("人员不存在")
             rows = self._connection.execute(
                 """
-                SELECT id, person_id, image_path, embedding_blob, embedding_dim,
-                       quality_metrics_json, created_at, source_type, image_sha256,
-                       embedding_sha256
+                SELECT id, person_id, image_path, source_type
                 FROM face_samples
                 WHERE person_id = ?
                 ORDER BY created_at

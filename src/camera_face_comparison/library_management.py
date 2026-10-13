@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Settings
-from .domain import FaceSample, Person
+from .domain import Person, SampleMetadata
 from .repository import FaceRepository
 
 
@@ -59,7 +59,7 @@ class LibraryManagementService:
                 failures.append(path)
         return tuple(failures) + self._cleanup_images(tuple(removable))
 
-    def _managed_image_path(self, sample: FaceSample) -> Path:
+    def _managed_image_path(self, sample: SampleMetadata) -> Path:
         """把样本路径解析为受管图片路径，并拒绝目录之外的目标。"""
 
         stored_path = Path(sample.image_path)
