@@ -9,6 +9,7 @@
 - [InsightFace 模型与标准库数据流](InsightFace模型与标准库数据流.md)
 - [术语与内部命名](术语与内部命名.md)
 - [阶段 6 演示验收记录](phase-6-demo-acceptance.md)
+- [系统可靠性重构与短性能复测](experiments/system-refactor-results.md)
 
 ## 实验与调研
 
