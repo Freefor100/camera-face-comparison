@@ -26,6 +26,18 @@ def classify_error(error: Exception, *, scope="system") -> TaskFailure:
     detail = "；".join([str(error), *getattr(error, "__notes__", [])])
     if isinstance(error, OperationCancelled):
         return TaskFailure("cancelled", "操作已取消。", detail)
+    from .face_engine import FaceInputError
+
+    if isinstance(error, FaceInputError):
+        messages = {
+            "no_face_detected": "图片中未检测到人脸，请调整输入。",
+            "multiple_faces": "图片中包含多张人脸，请选择单人照片。",
+            "invalid_embedding": "人脸特征无效，请更换图片后重试。",
+            "missing_face_landmarks": "人脸关键点无效，请正对镜头并保持面部无遮挡。",
+        }
+        return TaskFailure(
+            "input_invalid", messages.get(str(error), "输入无法形成有效人脸。"), detail
+        )
     if isinstance(error, sqlite3.Error):
         code = getattr(error, "sqlite_errorcode", 0) & 255
         if code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:

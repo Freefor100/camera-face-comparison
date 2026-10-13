@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain import FaceSample, Person
+from .thumbnails import ThumbnailLoader
 
 SAMPLE_CARD_TARGET_WIDTH = 176
 SAMPLE_GRID_SPACING = 12
@@ -46,6 +47,16 @@ class SampleThumbnail(QLabel):
         """返回适合多数肖像图片的初始显示尺寸。"""
         return QSize(SAMPLE_CARD_TARGET_WIDTH - 12, 126)
 
+    def set_source_image(self, image) -> None:
+        """只接收已缩小的图像，并在主线程创建显示资源。"""
+        self._source_pixmap = QPixmap.fromImage(image)
+        if image.isNull():
+            self.setText("图片不可用")
+        else:
+            self.setPixmap(
+                self._source_pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+
     def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         """缩放缩略图时保留原始比例，避免固定正方形裁切或拉伸。"""
         super().resizeEvent(event)
@@ -66,6 +77,7 @@ class LibraryPage(QWidget):
     delete_person_requested = Signal()
     delete_sample_requested = Signal(str)
     recheck_requested = Signal()
+    diagnostics_requested = Signal()
 
     def __init__(self, data_dir: Path, parent: QWidget | None = None) -> None:
         """创建标准库页面。
@@ -81,6 +93,10 @@ class LibraryPage(QWidget):
         self._sample_cards: list[QWidget] = []
         self._sample_delete_buttons: list[QPushButton] = []
         self._management_enabled = False
+        self.thumbnail_loader = ThumbnailLoader(self)
+        self.thumbnail_loader.ready.connect(self._thumbnail_ready)
+        self._selection_generation = 0
+        self._image_labels = {}
         self._build()
 
     def _build(self) -> None:
@@ -100,6 +116,10 @@ class LibraryPage(QWidget):
         self.status_label.setWordWrap(True)
         self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.status_label)
+        self.diagnostics_button = QPushButton("查看诊断详情")
+        self.diagnostics_button.setEnabled(False)
+        self.diagnostics_button.clicked.connect(self.diagnostics_requested)
+        layout.addWidget(self.diagnostics_button, alignment=Qt.AlignLeft)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("libraryWorkbench")
@@ -246,6 +266,8 @@ class LibraryPage(QWidget):
         _previous: QListWidgetItem | None,
     ) -> None:
         """根据当前列表项刷新人员详情和样本缩略图。"""
+        self._selection_generation += 1
+        self._image_labels.clear()
         self._clear_sample_grid()
         if current is None:
             self.selected_name_label.setText("未选择人员")
@@ -276,8 +298,14 @@ class LibraryPage(QWidget):
         path = Path(sample.image_path)
         if not path.is_absolute():
             path = self._data_dir / path
-        pixmap = QPixmap(str(path))
-        image_label = SampleThumbnail(pixmap)
+        image_label = SampleThumbnail(QPixmap())
+        image_label.setText("正在加载图片")
+        self._image_labels[sample.id] = image_label
+        resolved = path.resolve()
+        if resolved.is_relative_to((self._data_dir / "faces").resolve()):
+            self.thumbnail_loader.request(resolved, sample.id, self._selection_generation)
+        else:
+            image_label.setText("图片不可用")
         caption = QLabel(f"样本 {index + 1}")
         caption.setObjectName("sampleCaption")
         caption.setAlignment(Qt.AlignCenter)
@@ -299,6 +327,11 @@ class LibraryPage(QWidget):
 
         self._management_enabled = enabled
         self._update_management_actions()
+
+    def _thumbnail_ready(self, generation, sample_id, image):
+        """选中人员已变化时丢弃旧解码，不让旧照片回填新详情。"""
+        if generation == self._selection_generation and sample_id in self._image_labels:
+            self._image_labels[sample_id].set_source_image(image)
 
     def _update_management_actions(self) -> None:
         """根据当前选择和全局状态刷新管理按钮。"""

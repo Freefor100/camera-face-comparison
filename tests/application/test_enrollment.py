@@ -8,13 +8,12 @@ import cv2
 import numpy as np
 import pytest
 
-from tests.application.helpers import embedding as production_embedding
-
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.enrollment import EnrollmentService
 from camera_face_comparison.face_engine import FaceObservation
 from camera_face_comparison.image_input import ImageInput
 from camera_face_comparison.repository import FaceRepository
+from tests.application.helpers import embedding as production_embedding
 
 
 class FakeFaceEngine:
@@ -99,9 +98,7 @@ def test_one_valid_camera_input_creates_a_person(tmp_path) -> None:
         face_engine=DiverseFakeFaceEngine(),
         image_saver=_save_image,
     )
-    person = service.create_from_inputs(
-        "Alice", [ImageInput.from_camera(_textured_frame(120))]
-    )
+    person = service.create_from_inputs("Alice", [ImageInput.from_camera(_textured_frame(120))])
 
     restored = repository.get_person(person.id)
     samples = repository.list_samples(person.id)
@@ -153,9 +150,7 @@ def test_multiple_samples_can_be_appended_after_creation(tmp_path) -> None:
         face_engine=DiverseFakeFaceEngine(),
         image_saver=_save_image,
     )
-    person = service.create_from_inputs(
-        "Alice", [ImageInput.from_camera(_textured_frame(80))]
-    )
+    person = service.create_from_inputs("Alice", [ImageInput.from_camera(_textured_frame(80))])
 
     added = service.append_from_inputs(
         person.id,

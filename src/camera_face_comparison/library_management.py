@@ -35,44 +35,29 @@ class LibraryManagementService:
         return self._repository.rename_person(person_id, display_name)
 
     def delete_sample(self, person_id: str, sample_id: str) -> LibraryDeletionResult:
-        """删除一张非末尾样本，并清理其受管图片文件。
-
-        数据库是标准库事实来源，因此数据库事务先提交；文件清理失败只会留下无引用图片，
-        不会让识别流程继续引用已经不存在的数据。
-        """
-
-        samples = self._repository.list_sample_metadata(person_id)
-        sample = next((item for item in samples if item.id == sample_id), None)
-        if sample is None:
-            raise ValueError("样本不存在或不属于所选人员")
-        # 删除前先解析并验证路径；数据库提交后只清理已经不再被引用的文件。
-        managed_path = self._managed_image_path(sample)
+        """仓库提交前校验归属与路径，提交后只清理实际删除的元信息。"""
         removed = self._repository.delete_sample(person_id, sample_id)
-        failures = self._cleanup_images(
-            tuple(
-                path for path in (managed_path,) if not self._repository.image_is_referenced(path)
-            )
-        )
-        return LibraryDeletionResult(
-            person_id=removed.person_id,
-            removed_sample_count=1,
-            cleanup_failures=failures,
-        )
+        return LibraryDeletionResult(removed.person_id, 1, self._cleanup_removed((removed,)))
 
     def delete_person(self, person_id: str) -> LibraryDeletionResult:
-        """删除人员及其全部样本，并清理相应的受管图片文件。"""
-
-        samples = self._repository.list_sample_metadata(person_id)
-        managed_paths = tuple(self._managed_image_path(sample) for sample in samples)
+        """先提交删除，再清理事务实际删掉的样本，保留失败路径。"""
         removed = self._repository.delete_person(person_id)
-        failures = self._cleanup_images(
-            tuple(path for path in managed_paths if not self._repository.image_is_referenced(path))
-        )
-        return LibraryDeletionResult(
-            person_id=person_id,
-            removed_sample_count=len(removed),
-            cleanup_failures=failures,
-        )
+        return LibraryDeletionResult(person_id, len(removed), self._cleanup_removed(removed))
+
+    def _cleanup_removed(self, samples) -> tuple[Path, ...]:
+        """提交后的引用检查或清理故障只报告警告，不抹掉已提交事实。"""
+        import sqlite3
+
+        removable, failures = [], []
+        for sample in samples:
+            path = self._settings.data_dir / sample.image_path
+            try:
+                path = self._managed_image_path(sample)
+                if not self._repository.image_is_referenced(path):
+                    removable.append(path)
+            except (sqlite3.Error, OSError, ValueError):
+                failures.append(path)
+        return tuple(failures) + self._cleanup_images(tuple(removable))
 
     def _managed_image_path(self, sample: FaceSample) -> Path:
         """把样本路径解析为受管图片路径，并拒绝目录之外的目标。"""

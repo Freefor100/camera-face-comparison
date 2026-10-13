@@ -11,13 +11,13 @@ import numpy as np
 
 from .config import Settings
 from .domain import RecognitionResult
+from .errors import OperationCancelled, classify_error
 from .face_engine import DetectedFace, FaceInputError, FaceObservation
 from .face_library import FaceLibrarySnapshot
 from .image_input import ImageInput, measure_quality, quality_warnings
 from .multi_frame import MultiFrameObservation
 from .open_set_policy import apply_ranked_open_set_policy
 from .repository import FaceRepository
-from .errors import OperationCancelled, classify_error
 
 
 class ProbeFaceEngine(Protocol):
@@ -323,7 +323,7 @@ class RecognitionService:
                 latency_ms=result.latency_ms,
                 reason=result.reason,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - 日志故障不能抹去已经计算的识别结果
             failure = classify_error(error, scope="library")
             result = replace(
                 result,

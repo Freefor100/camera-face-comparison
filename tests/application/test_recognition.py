@@ -6,8 +6,6 @@ import hashlib
 
 import numpy as np
 
-from tests.application.helpers import embedding as production_embedding
-
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.face_engine import FaceInputError, FaceObservation
 from camera_face_comparison.face_library import InMemoryFaceLibrary
@@ -15,6 +13,7 @@ from camera_face_comparison.image_input import ImageInput
 from camera_face_comparison.open_set_policy import ScoreThresholdPolicy
 from camera_face_comparison.recognition import RecognitionService
 from camera_face_comparison.repository import FaceRepository, SampleInput
+from tests.application.helpers import embedding as production_embedding
 
 
 def _sample_input(
@@ -41,9 +40,7 @@ def test_mean_prototype_uses_all_reference_embeddings_before_scoring(tmp_path) -
         display_name="Alice",
         samples=[
             _sample_input(production_embedding([1.0, 0.0]), image_path="faces/alice/1.jpg"),
-            _sample_input(
-                production_embedding([0.10, 0.995]), image_path="faces/alice/2.jpg"
-            ),
+            _sample_input(production_embedding([0.10, 0.995]), image_path="faces/alice/2.jpg"),
         ],
     )
     repository.create_person_with_samples(
@@ -54,8 +51,10 @@ def test_mean_prototype_uses_all_reference_embeddings_before_scoring(tmp_path) -
             _sample_input(production_embedding([0.90, 0.436]), image_path="faces/bob/2.jpg"),
         ],
     )
-    decision = InMemoryFaceLibrary.from_repository(repository).snapshot().search(
-        production_embedding([1.0, 0.0]), ScoreThresholdPolicy(minimum_score=0.80)
+    decision = (
+        InMemoryFaceLibrary.from_repository(repository)
+        .snapshot()
+        .search(production_embedding([1.0, 0.0]), ScoreThresholdPolicy(minimum_score=0.80))
     )
     repository.close()
 
@@ -71,15 +70,21 @@ def test_frozen_score_rule_does_not_reject_a_close_second_candidate(tmp_path) ->
     repository.create_person_with_samples(
         person_id="alice",
         display_name="Alice",
-        samples=[_sample_input(production_embedding([0.90, 0.43589]), image_path="faces/alice/1.jpg")],
+        samples=[
+            _sample_input(production_embedding([0.90, 0.43589]), image_path="faces/alice/1.jpg")
+        ],
     )
     repository.create_person_with_samples(
         person_id="bob",
         display_name="Bob",
-        samples=[_sample_input(production_embedding([0.89, 0.45596]), image_path="faces/bob/1.jpg")],
+        samples=[
+            _sample_input(production_embedding([0.89, 0.45596]), image_path="faces/bob/1.jpg")
+        ],
     )
-    decision = InMemoryFaceLibrary.from_repository(repository).snapshot().search(
-        production_embedding([1.0, 0.0]), ScoreThresholdPolicy(minimum_score=0.80)
+    decision = (
+        InMemoryFaceLibrary.from_repository(repository)
+        .snapshot()
+        .search(production_embedding([1.0, 0.0]), ScoreThresholdPolicy(minimum_score=0.80))
     )
     repository.close()
 
@@ -225,7 +230,9 @@ def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, mon
     assert result.person_id == "alice"
 
 
-def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_frames(tmp_path) -> None:
+def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_frames(
+    tmp_path,
+) -> None:
     """多帧识别应跳过无效帧，并用清晰度最高的有效帧完成一次判定。"""
 
     settings = load_settings(tmp_path)
@@ -269,8 +276,7 @@ def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_fram
             )
 
     inputs = [
-        ImageInput.from_camera(np.full((80, 80, 3), value, dtype=np.uint8))
-        for value in range(5)
+        ImageInput.from_camera(np.full((80, 80, 3), value, dtype=np.uint8)) for value in range(5)
     ]
     result = RecognitionService(
         repository,
@@ -341,8 +347,7 @@ def test_multiframe_recognition_detects_every_frame_but_extracts_one_embedding(t
 
     engine = SplitBurstEngine()
     inputs = [
-        ImageInput.from_camera(np.full((80, 80, 3), value, dtype=np.uint8))
-        for value in range(5)
+        ImageInput.from_camera(np.full((80, 80, 3), value, dtype=np.uint8)) for value in range(5)
     ]
 
     result = RecognitionService(

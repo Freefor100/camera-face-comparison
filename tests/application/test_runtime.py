@@ -71,9 +71,7 @@ def test_actual_backend_reports_cpu_when_requested_cuda_falls_back() -> None:
 
     requested = select_execution_backend(("CUDAExecutionProvider", "CPUExecutionProvider"))
 
-    backend = actual_backend_for_analyzer(
-        _FakeAnalyzer(("CPUExecutionProvider",)), requested
-    )
+    backend = actual_backend_for_analyzer(_FakeAnalyzer(("CPUExecutionProvider",)), requested)
 
     assert backend.name == "cpu"
     assert backend.providers == ("CPUExecutionProvider",)
@@ -94,4 +92,6 @@ def test_actual_backend_keeps_cuda_when_all_sessions_use_cuda() -> None:
         _FakeAnalyzer(("CUDAExecutionProvider", "CPUExecutionProvider")), requested
     )
 
-    assert backend == requested
+    assert backend.name == requested.name
+    assert backend.providers == requested.providers
+    assert dict(backend.model_providers)["detection"][0] == "CUDAExecutionProvider"

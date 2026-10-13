@@ -6,14 +6,13 @@ from pathlib import Path
 
 import numpy as np
 
-from tests.application.helpers import embedding as production_embedding
-
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.enrollment import EnrollmentService
 from camera_face_comparison.face_engine import FaceObservation
 from camera_face_comparison.image_input import ImageInput
 from camera_face_comparison.integrity import verify_library
 from camera_face_comparison.repository import FaceRepository
+from tests.application.helpers import embedding as production_embedding
 
 
 class FakeFaceEngine:

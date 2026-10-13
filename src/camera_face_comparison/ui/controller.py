@@ -40,6 +40,7 @@ class TaskController(QObject):
     result_reset = Signal()
     recognition_status = Signal(str)
     recognition_error = Signal(object)
+    recognition_cancelled = Signal(str)
     library_status = Signal(str)
     device_status = Signal(str)
     catalog_ready = Signal(object)
@@ -56,6 +57,7 @@ class TaskController(QObject):
         self.worker = self.camera_worker = self.scan_worker = None
         self._sequence = self._task_id = self._captured = 0
         self._cancelled = False
+        self._device_failed = False
         self.request_started_at = None
 
     @property
@@ -212,6 +214,7 @@ class TaskController(QObject):
             message = outcome.message
             if outcome.report.warnings:
                 message += f" 有 {len(outcome.report.warnings)} 项文件清理警告。"
+                message += "\n" + "\n".join(outcome.report.warnings)
         else:
             self._invalidate("unavailable" if outcome.failure else "invalid")
             message = (
@@ -248,6 +251,8 @@ class TaskController(QObject):
     def _on_finished(self, task_id, worker):
         """退出只释放资源，不覆盖成功、失败或取消文字。"""
         if task_id == self._task_id and self.worker is worker:
+            if self._cancelled and self.state.task in {"recognition", "camera_recognition"}:
+                self.recognition_cancelled.emit("识别已取消。")
             self._stop_collection()
             self.worker = None
             worker.deleteLater()
@@ -288,12 +293,13 @@ class TaskController(QObject):
         """设备线程独占句柄，预览不依赖标准库健康状态。"""
         if self.state.closing or self.camera_worker is not None or self.scan_worker is not None:
             return
+        self._device_failed = False
         worker = CameraWorker(self.camera, index, self)
         self.camera_worker = worker
         self._set_state(camera="starting")
         worker.opened.connect(lambda: self._camera_opened(worker))
         worker.frame_ready.connect(lambda frame: self._camera_frame(worker, frame))
-        worker.worker_status.connect(self.device_status)
+        worker.worker_status.connect(lambda message: self._camera_status(worker, message))
         worker.worker_error.connect(lambda error: self._camera_error(worker, error))
         worker.finished.connect(lambda: self._camera_finished(worker))
         worker.start()
@@ -302,6 +308,15 @@ class TaskController(QObject):
         """打开事件只改变设备状态，不重新启用忙碌中的识别按钮。"""
         if self.camera_worker is worker and self.state.camera == "starting":
             self._set_state(camera="running")
+
+    def _camera_status(self, worker, message):
+        """已停止或关闭中的设备通知不能覆盖当前设备说明。"""
+        if (
+            self.camera_worker is worker
+            and self.state.camera == "running"
+            and not self.state.closing
+        ):
+            self.device_status.emit(message)
 
     def _camera_frame(self, worker, frame):
         """停止后丢弃迟到画面，避免最后一帧重新填回预览。"""
@@ -312,6 +327,7 @@ class TaskController(QObject):
     def _camera_error(self, worker, error):
         """摄像头错误只显示在设备区，停止不覆盖错误原因。"""
         if self.camera_worker is worker:
+            self._device_failed = True
             self.device_status.emit(error.message + " " + error.detail)
             self.stop_camera()
 
@@ -323,7 +339,7 @@ class TaskController(QObject):
             self._cancelled = True
             self._stop_collection()
             self.worker.cancel()
-            self.recognition_status.emit("识别已取消，正在等待任务结束。")
+            self.recognition_cancelled.emit("识别已取消，正在等待任务安全退出。")
         if self.camera_worker is None:
             self._set_state(camera="stopped")
         else:
@@ -335,6 +351,8 @@ class TaskController(QObject):
         if self.camera_worker is worker:
             self.camera_worker = None
             self._set_state(camera="stopped")
+            if not self._device_failed and not self.state.closing:
+                self.device_status.emit("预览已停止。")
             worker.deleteLater()
             self._check_close_ready()
 

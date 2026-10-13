@@ -68,7 +68,7 @@ def run_application(data_dir: Path) -> int:
         face_engine = FaceEngine.from_local_model(settings)
         camera = CameraService()
         window = MainWindow(settings=settings, face_engine=face_engine, camera=camera)
-    except (KeyError, TypeError, ValueError, RuntimeError) as error:
+    except Exception as error:  # noqa: BLE001 - 启动边界需覆盖模型和配置的实际错误类型
         QMessageBox.critical(application.activeWindow(), "启动失败", str(error))
         return 1
     window.show()

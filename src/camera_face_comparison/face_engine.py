@@ -87,19 +87,25 @@ class FaceEngine:
         os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
         backend = detect_execution_backend()
         try:
-            from insightface.app import FaceAnalysis
+            from insightface.model_zoo import get_model
         except ImportError as error:
             raise RuntimeError(
                 "InsightFace is not installed; install the project dependencies first"
             ) from error
-        analyzer = FaceAnalysis(
-            name="buffalo_l",
-            root=str(settings.data_dir),
-            providers=list(backend.providers),
-            # 应用不使用年龄、性别等附加模型，限制模块可缩短加载时间并减少模型依赖。
-            allowed_modules=["detection", "recognition"],
+        paths = (model_dir / "det_10g.onnx", model_dir / "w600k_r50.onnx")
+        if not all(path.is_file() for path in paths):
+            raise RuntimeError("本地检测或特征模型缺失，请先准备完整模型")
+        detector, recognizer = [
+            get_model(str(path), providers=list(backend.providers), download=False)
+            for path in paths
+        ]
+        if detector is None or recognizer is None:
+            raise RuntimeError("本地模型格式无法识别")
+        # 会话构造已经选择 provider；非负上下文只设置检测尺寸，避免 CPU prepare 重建会话。
+        detector.prepare(ctx_id=0, input_size=(640, 640), det_thresh=0.5)
+        analyzer = SimpleNamespace(
+            det_model=detector, models={"detection": detector, "recognition": recognizer}
         )
-        analyzer.prepare(ctx_id=backend.context_id, det_size=(640, 640))
         # ORT 可能没有把 CUDA 设为 session 首选 provider，因此按已创建 session 修正后端标记。
         actual_backend = actual_backend_for_analyzer(analyzer, backend)
         return cls(analyzer=analyzer, backend=actual_backend)
@@ -108,7 +114,7 @@ class FaceEngine:
     def backend(self) -> ExecutionBackend:
         """返回当前模型适配器实际选择的推理后端。"""
 
-        return self._backend
+        return actual_backend_for_analyzer(self._analyzer, self._backend)
 
     def extract_faces(self, frame: np.ndarray) -> list[FaceObservation]:
         """检测图片中的全部人脸，并逐张提取归一化身份特征。
@@ -196,6 +202,8 @@ class FaceEngine:
             kps=np.asarray(detected_face.landmarks, dtype=np.float32),
         )
         embedding = recognizer.get(frame, vendor_face)
+        if np.asarray(embedding).shape != (512,):
+            raise FaceInputError("invalid_embedding")
         return FaceObservation(
             bbox=detected_face.bbox,
             detection_score=detected_face.detection_score,
@@ -215,8 +223,13 @@ def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
 
     vector = np.asarray(embedding, dtype=np.float32)
     norm = float(np.linalg.norm(vector))
-    if (vector.ndim != 1 or vector.size == 0 or not np.isfinite(vector).all()
-            or not np.isfinite(norm) or norm == 0.0):
+    if (
+        vector.ndim != 1
+        or vector.size == 0
+        or not np.isfinite(vector).all()
+        or not np.isfinite(norm)
+        or norm == 0.0
+    ):
         raise FaceInputError("invalid_embedding")
     # 单位向量使后续点积等价于余弦相似度，也统一多样本均值的尺度。
     return vector / norm
@@ -253,7 +266,9 @@ def _laplacian_variance(frame: np.ndarray) -> float:
     try:
         import cv2
     except ImportError as error:
-        raise RuntimeError("OpenCV is not installed; install the project dependencies first") from error
+        raise RuntimeError(
+            "OpenCV is not installed; install the project dependencies first"
+        ) from error
     grayscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(grayscale, cv2.CV_64F).var())
 

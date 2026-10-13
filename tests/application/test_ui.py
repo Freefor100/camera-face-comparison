@@ -1,4 +1,5 @@
 """验证标准库页面的选择、管理入口和缩略图布局契约。"""
+
 import os
 from datetime import UTC, datetime
 
@@ -16,6 +17,7 @@ from tests.application.helpers import embedding as production_embedding
 def qapplication():
     """复用离屏 Qt 应用。"""
     return QApplication.instance() or QApplication([])
+
 
 def test_library_page_exposes_person_and_sample_management_actions(
     tmp_path,
@@ -47,6 +49,7 @@ def test_library_page_exposes_person_and_sample_management_actions(
     delete_buttons[0].click()
     assert requested_samples == ["sample-1"]
     page.close()
+
 
 def test_switching_people_detaches_previous_sample_cards(tmp_path, qapplication) -> None:
     """切换人员时应立即移除旧样本卡片，避免短暂重叠显示。"""

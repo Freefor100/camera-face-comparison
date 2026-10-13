@@ -202,6 +202,7 @@ def test_close_waits_for_inference_without_blocking_the_ui(tmp_path, app):
 def test_late_task_error_and_late_camera_frame_cannot_change_current_view(tmp_path, app):
     """已结束任务的错误和停止后的视频帧不能覆盖当前显示。"""
     from camera_face_comparison.errors import TaskFailure
+
     window = window_at(tmp_path)
     wait_for(app, lambda: window.controller.idle)
     window.controller._on_error(-1, TaskFailure("storage_unavailable", "旧任务", "迟到"))
@@ -214,4 +215,5 @@ def test_late_task_error_and_late_camera_frame_cannot_change_current_view(tmp_pa
     window.controller._camera_frame(old_worker, np.zeros((20, 20, 3), dtype=np.uint8))
     assert window.controller.current_frame is None
     assert window.preview_label.pixmap().isNull()
+    assert "已打开" not in window._recognition_page.device_status_label.text()
     window.close()

@@ -7,9 +7,8 @@ import hashlib
 import numpy as np
 import pytest
 
-from tests.application.helpers import embedding as production_embedding
-
 from camera_face_comparison.repository import FaceRepository, SampleInput
+from tests.application.helpers import embedding as production_embedding
 
 
 def _sample_input(

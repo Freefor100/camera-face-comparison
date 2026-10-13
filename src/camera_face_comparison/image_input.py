@@ -56,7 +56,7 @@ class ImageInput:
             raise RuntimeError("OpenCV is not installed; install the project dependencies first") from error
         frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
         if frame is None:
-            raise ValueError(f"could not decode image: {path.name}")
+            raise ValueError(f"无法读取图片：{path.name}，请确认格式和文件内容。")
         return cls(frame=_validated_copy(frame), source_type=source_type, safe_name=path.name)
 
 

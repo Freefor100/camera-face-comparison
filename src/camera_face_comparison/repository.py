@@ -354,6 +354,13 @@ class FaceRepository:
     @staticmethod
     def _metadata_from_row(row) -> SampleMetadata:
         """仅恢复样本编号、归属、路径和来源。"""
+        if any(
+            not isinstance(row[key], str) or not row[key].strip()
+            for key in ("id", "person_id", "image_path")
+        ):
+            raise ValueError("样本编号、人员编号或图片路径无效")
+        if row["source_type"] not in {"file", "camera", "dataset"}:
+            raise ValueError("样本来源无效")
         return SampleMetadata(row["id"], row["person_id"], row["image_path"], row["source_type"])
 
     def record_recognition(
@@ -471,7 +478,9 @@ class FaceRepository:
                 for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
             )
             if actual != expected_columns:
-                raise LibraryUnavailableError(f"数据库表结构无效：{table}；请恢复正确数据后重新检查")
+                raise LibraryUnavailableError(
+                    f"数据库表结构无效：{table}；请恢复正确数据后重新检查"
+                )
 
     @staticmethod
     def _make_sample(
@@ -556,6 +565,7 @@ class FaceRepository:
         """把 SQLite 行恢复为样本对象并校验特征维度。"""
         # copy() 解除数组对 SQLite BLOB 缓冲区的只读视图依赖，返回值可安全独立持有。
         embedding = np.frombuffer(row["embedding_blob"], dtype=np.float32).copy()
+        FaceRepository._metadata_from_row(row)
         if (
             embedding.size != 512
             or embedding.size != row["embedding_dim"]
@@ -582,6 +592,10 @@ class FaceRepository:
     @staticmethod
     def _person_from_row(row: sqlite3.Row) -> Person:
         """把 SQLite 行恢复为人员对象。"""
+        if any(
+            not isinstance(row[key], str) or not row[key].strip() for key in ("id", "display_name")
+        ):
+            raise ValueError("人员编号或姓名无效")
         return Person(
             id=row["id"],
             display_name=row["display_name"],

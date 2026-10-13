@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import hashlib
 
-import numpy as np
 import pytest
-
-from tests.application.helpers import embedding as production_embedding
 
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.library_management import LibraryManagementService
 from camera_face_comparison.repository import FaceRepository, SampleInput
+from tests.application.helpers import embedding as production_embedding
 
 
 def _add_person_with_files(
@@ -107,9 +105,7 @@ def test_management_service_rejects_sample_path_outside_faces_directory(tmp_path
     )
     service = LibraryManagementService(repository, settings)
 
-    repository._connection.execute(
-        "UPDATE face_samples SET image_path = ?", (str(outside_path),)
-    )
+    repository._connection.execute("UPDATE face_samples SET image_path = ?", (str(outside_path),))
     repository._connection.commit()
     with pytest.raises(ValueError, match="受管图片目录"):
         service.delete_person("alice-id")

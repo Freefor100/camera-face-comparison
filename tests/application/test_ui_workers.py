@@ -68,8 +68,8 @@ def test_cancelled_input_stream_does_not_write_a_recognition_log(tmp_path) -> No
     with pytest.raises(RuntimeError, match="recognition was cancelled"):
         service.compare_inputs(stream, frame_count=5)
 
-    log_count = repository._connection.execute(
-        "SELECT COUNT(*) FROM recognition_logs"
-    ).fetchone()[0]
+    log_count = repository._connection.execute("SELECT COUNT(*) FROM recognition_logs").fetchone()[
+        0
+    ]
     assert log_count == 0
     repository.close()

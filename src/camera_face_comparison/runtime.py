@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-import sys
+import sysconfig
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,9 +14,10 @@ from typing import Literal
 class ExecutionBackend:
     """当前 ONNX Runtime 推理后端及其 InsightFace 上下文参数。"""
 
-    name: Literal["cuda", "cpu"]
+    name: Literal["cuda", "cpu", "mixed"]
     providers: tuple[str, ...]
     context_id: int
+    model_providers: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 def detect_execution_backend() -> ExecutionBackend:
@@ -33,36 +34,32 @@ def detect_execution_backend() -> ExecutionBackend:
 
 
 def actual_backend_for_analyzer(analyzer: object, requested: ExecutionBackend) -> ExecutionBackend:
-    """根据 InsightFace 已创建的 session 检查实际使用的 provider。
-
-    参数：
-        analyzer：已执行 `prepare` 的 InsightFace `FaceAnalysis` 对象。
-        requested：创建分析器时请求的后端。
-    返回：
-        所有可检查模型都使用 CUDA 时返回原请求；发现实际回退到 CPU 时返回 CPU。
-    前置条件：
-        分析器已经完成模型加载。无法检查 session 的测试替身会保留请求结果。
-    """
-
-    if requested.name != "cuda":
-        return requested
+    """读取检测和特征会话的实际首选后端，不把混合执行误写成纯 CPU。"""
     models = getattr(analyzer, "models", None)
     if not isinstance(models, dict):
         return requested
-    session_providers: list[list[str]] = []
-    # 每个模型各自持有 ORT session；逐个核验首选 provider 可发现 session 级 CPU 回退。
-    for model in models.values():
-        session = getattr(model, "session", None)
-        get_providers = getattr(session, "get_providers", None)
-        if callable(get_providers):
-            providers = [str(provider) for provider in get_providers()]
-            if providers:
-                session_providers.append(providers)
-    if session_providers and not all(
-        providers[0] == "CUDAExecutionProvider" for providers in session_providers
-    ):
-        return _cpu_backend()
-    return requested
+    roles = []
+    for role in ("detection", "recognition"):
+        session = getattr(models.get(role), "session", None)
+        getter = getattr(session, "get_providers", None)
+        if callable(getter):
+            values = tuple(getter())
+            if values:
+                roles.append((role, values))
+    if not roles:
+        return requested
+    priorities = {providers[0] for _, providers in roles}
+    name = (
+        "cuda"
+        if priorities == {"CUDAExecutionProvider"}
+        else "cpu"
+        if priorities == {"CPUExecutionProvider"}
+        else "mixed"
+    )
+    providers = tuple(dict.fromkeys(value for _, values in roles for value in values))
+    return ExecutionBackend(
+        name, providers, -1 if name == "cpu" else requested.context_id, tuple(roles)
+    )
 
 
 def backend_metadata(backend: ExecutionBackend) -> dict[str, object]:
@@ -72,6 +69,7 @@ def backend_metadata(backend: ExecutionBackend) -> dict[str, object]:
         "name": backend.name,
         "providers": list(backend.providers),
         "context_id": backend.context_id,
+        "model_providers": {role: list(values) for role, values in backend.model_providers},
     }
 
 
@@ -116,7 +114,9 @@ def _load_onnxruntime():
     try:
         import onnxruntime as ort
     except ImportError as error:
-        raise RuntimeError("ONNX Runtime is not installed; install project dependencies first") from error
+        raise RuntimeError(
+            "ONNX Runtime is not installed; install project dependencies first"
+        ) from error
     _preload_cuda_libraries(ort)
     return ort
 
@@ -166,13 +166,5 @@ def _load_shared_library(path: Path) -> None:
 
 
 def _site_package_root() -> Path:
-    """返回当前解释器的 site-packages 根目录。"""
-
-    executable = Path(sys.executable).resolve()
-    candidates = [
-        executable.parent.parent / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages",
-    ]
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    return Path(__file__).resolve().parents[2]
+    """使用当前虚拟环境的安装路径，不解析基础解释器的符号链接。"""
+    return Path(sysconfig.get_path("purelib"))

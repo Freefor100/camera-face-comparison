@@ -13,10 +13,10 @@ import numpy as np
 
 from .config import Settings
 from .domain import Person
+from .errors import OperationCancelled
 from .face_engine import FaceObservation, normalize_embedding
 from .image_input import ImageInput, measure_quality
 from .repository import FaceRepository, SampleInput
-from .errors import OperationCancelled
 
 
 class FaceExtractor(Protocol):

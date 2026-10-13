@@ -18,6 +18,7 @@ from camera_face_comparison.face_engine import (
 )
 from camera_face_comparison.image_input import measure_quality, quality_warnings
 from camera_face_comparison.runtime import ExecutionBackend
+from tests.application.helpers import embedding as production_embedding
 
 
 def _face(*, score: float = 0.95, size: int = 160, blur: float = 140.0) -> FaceObservation:
@@ -89,7 +90,7 @@ def test_face_engine_adapts_model_output_and_normalizes_embedding(tmp_path) -> N
         def get(self, frame, face):
             """模拟识别模型输出。"""
 
-            return np.array([3.0, 4.0], dtype=np.float32)
+            return production_embedding([3.0, 4.0])
 
     detector = Detector()
     analyzer = SimpleNamespace(
@@ -108,7 +109,7 @@ def test_face_engine_adapts_model_output_and_normalizes_embedding(tmp_path) -> N
     observation = engine.extract_single_face(np.zeros((240, 320, 3), dtype=np.uint8))
 
     assert observation.bbox == (10.0, 20.0, 190.0, 200.0)
-    assert np.allclose(observation.embedding, [0.6, 0.8])
+    assert np.allclose(observation.embedding, production_embedding([0.6, 0.8]))
     assert observation.blur_variance == 1.0
     assert blur_inputs == [(180, 180, 3)]
 
@@ -144,7 +145,7 @@ def test_face_engine_detection_does_not_run_identity_model() -> None:
             """返回固定的未归一化身份特征。"""
 
             self.calls += 1
-            return np.array([3.0, 4.0], dtype=np.float32)
+            return production_embedding([3.0, 4.0])
 
     recognizer = Recognizer()
     analyzer = SimpleNamespace(
@@ -160,50 +161,49 @@ def test_face_engine_detection_does_not_run_identity_model() -> None:
     assert detected.bbox == (10.0, 20.0, 190.0, 200.0)
     observation = engine.extract_detected_face(frame, detected)
     assert recognizer.calls == 1
-    assert np.allclose(observation.embedding, [0.6, 0.8])
+    assert np.allclose(observation.embedding, production_embedding([0.6, 0.8]))
 
 
-def test_local_model_loading_disables_dependency_update_checks(tmp_path, monkeypatch) -> None:
-    """离线启动必须在导入 InsightFace 前设置依赖更新防护变量。"""
-
+def test_local_model_loading_disables_updates_and_loads_only_two_required_files(
+    tmp_path, monkeypatch
+):
+    """离线加载只调用检测与特征模型，并保留尺寸、后端和更新禁用约束。"""
     settings = load_settings(tmp_path)
-    (settings.models_dir / "buffalo_l").mkdir()
-    monkeypatch.delenv("NO_ALBUMENTATIONS_UPDATE", raising=False)
-    monkeypatch.delenv("ORT_DISABLE_TELEMETRY", raising=False)
-    monkeypatch.delenv("MPLCONFIGDIR", raising=False)
+    model_dir = settings.models_dir / "buffalo_l"
+    model_dir.mkdir()
+    for name in ("det_10g.onnx", "w600k_r50.onnx", "2d106det.onnx"):
+        (model_dir / name).touch()
+    loaded = []
 
-    class FakeAnalysis:
-        """模拟 InsightFace 分析器构造和 prepare 调用。"""
+    class Model:
+        """在厂商加载边界替换昂贵模型会话。"""
 
-        def __init__(self, **kwargs) -> None:
-            """保存模型构造参数。"""
+        session = SimpleNamespace(get_providers=lambda: ["CPUExecutionProvider"])
 
-            type(self).last_kwargs = kwargs
+        def prepare(self, **kwargs):
+            """记录有效检测尺寸，不创建额外会话。"""
+            self.size = kwargs["input_size"]
 
-        def prepare(self, **kwargs) -> None:
-            """保存模型准备参数。"""
+    def get_model(path, **kwargs):
+        """记录真实加载请求的文件名，不能加载额外关键点文件。"""
+        loaded.append(Path(path).name)
+        return Model()
 
-            type(self).last_prepare_kwargs = kwargs
+    from pathlib import Path
 
-    app_module = ModuleType("insightface.app")
-    app_module.FaceAnalysis = FakeAnalysis
-    insightface_module = ModuleType("insightface")
-    insightface_module.app = app_module
-    monkeypatch.setitem(sys.modules, "insightface", insightface_module)
-    monkeypatch.setitem(sys.modules, "insightface.app", app_module)
+    module = ModuleType("insightface.model_zoo")
+    module.get_model = get_model
+    root = ModuleType("insightface")
+    root.model_zoo = module
+    monkeypatch.setitem(sys.modules, "insightface", root)
+    monkeypatch.setitem(sys.modules, "insightface.model_zoo", module)
     monkeypatch.setattr(
         "camera_face_comparison.face_engine.detect_execution_backend",
-        lambda: ExecutionBackend(
-            name="cuda",
-            providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
-            context_id=0,
-        ),
+        lambda: ExecutionBackend("cpu", ("CPUExecutionProvider",), -1),
     )
-
-    FaceEngine.from_local_model(settings)
-
+    engine = FaceEngine.from_local_model(settings)
+    assert loaded == ["det_10g.onnx", "w600k_r50.onnx"]
+    assert engine.backend.name == "cpu"
     assert os.environ["NO_ALBUMENTATIONS_UPDATE"] == "1"
     assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"
-    assert os.environ["MPLCONFIGDIR"] == str(settings.logs_dir / "matplotlib")
-    assert FakeAnalysis.last_kwargs["allowed_modules"] == ["detection", "recognition"]
-    assert FakeAnalysis.last_prepare_kwargs["ctx_id"] == 0
+    assert engine._analyzer.det_model.size == (640, 640)

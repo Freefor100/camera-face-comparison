@@ -4,7 +4,7 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMainWindow, QMessageBox, QTabWidget
 
@@ -27,6 +27,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(APP_STYLE_SHEET)
         self._settings = settings
         self._display_frame = self._last_bbox = None
+        self._close_timer = None
+        self._diagnostic_detail = ""
         self._recognition_page = RecognitionPage()
         self._library_page = LibraryPage(settings.data_dir)
         tabs = QTabWidget()
@@ -70,11 +72,13 @@ class MainWindow(QMainWindow):
         self.controller.result_reset.connect(self._reset_result)
         self.controller.recognition_status.connect(self._recognition_progress)
         self.controller.recognition_error.connect(self._recognition_error)
-        self.controller.library_status.connect(self._library_page.status_label.setText)
+        self.controller.recognition_cancelled.connect(self._recognition_cancelled)
+        self.controller.library_status.connect(self._show_library_status)
+        self._library_page.diagnostics_requested.connect(self._show_diagnostics)
         self.controller.device_status.connect(self._recognition_page.device_status_label.setText)
         self.controller.catalog_ready.connect(self._show_catalog)
         self.controller.backend_changed.connect(self._show_backend)
-        self.controller.ready_to_close.connect(self.close)
+        self.controller.ready_to_close.connect(self._finish_close)
         for signal, handler in (
             (self._recognition_page.refresh_requested, self.refresh_cameras),
             (self._recognition_page.start_requested, self.start_camera),
@@ -144,9 +148,31 @@ class MainWindow(QMainWindow):
 
     def _show_backend(self, backend):
         """显示当前会话后端，未准备时不猜测为 CUDA 或 CPU。"""
-        self._recognition_page.model_backend_label.setText(
-            "推理：" + (backend.name.upper() if backend is not None else "未准备")
-        )
+        name = backend.name.upper() if backend is not None else "未准备"
+        if backend is not None and backend.name == "mixed":
+            roles = dict(backend.model_providers)
+
+            def role_name(role):
+                """将会话首选 provider 转为简短中文显示。"""
+                return "CUDA" if roles[role][0] == "CUDAExecutionProvider" else "CPU"
+
+            name = "检测 " + role_name("detection") + "／特征 " + role_name("recognition")
+        self._recognition_page.model_backend_label.setText("推理：" + name)
+
+    def _show_library_status(self, message):
+        """主页面显示完整简短说明，原始诊断放在独立详情中。"""
+        summary, _, detail = message.partition("\n")
+        self._library_page.status_label.setText(summary)
+        self._diagnostic_detail = detail
+        self._library_page.diagnostics_button.setEnabled(bool(detail))
+
+    def _show_diagnostics(self):
+        """仅在用户主动查看时展示具体记录、路径和底层错误。"""
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("标准库诊断")
+        dialog.setText(self._library_page.status_label.text())
+        dialog.setDetailedText(self._diagnostic_detail)
+        dialog.exec()
 
     def _show_catalog(self, report):
         """展示仅含元信息的人员目录，不从主线程重新读数据库。"""
@@ -251,12 +277,20 @@ class MainWindow(QMainWindow):
         elapsed = result.latency_ms if started is None else (perf_counter() - started) * 1000
         page.latency_label.setText(f"{elapsed:.0f} ms")
 
+    def _recognition_cancelled(self, message):
+        """取消有独立终态，不留下永久的正在识别或错误颜色。"""
+        self._reset_result()
+        self.result_label.setText("识别已取消")
+        self.status_label.setText(message)
+
     def _recognition_error(self, failure):
         """区别输入失败与系统失败，同时保留诊断详情供排查。"""
         page = self._recognition_page
         page.clear_result_metrics()
         page.set_result_state(
-            "invalid" if failure.kind in {"business_constraint", "file_error"} else "error"
+            "invalid"
+            if failure.kind in {"business_constraint", "file_error", "input_invalid"}
+            else "error"
         )
         self.result_label.setText("比对失败")
         page.result_name_label.setText(failure.message)
@@ -389,11 +423,25 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """线程未退出时忽略关闭请求，异步释放完毕后才接受。"""
-        if self.controller.can_close:
+        if self.controller.can_close and self._library_page.thumbnail_loader.idle:
+            self._library_page.thumbnail_loader.cancel()
+            if self._close_timer is not None:
+                self._close_timer.stop()
             event.accept()
         else:
             event.ignore()
+            self._library_page.thumbnail_loader.cancel()
+            if self._close_timer is None:
+                self._close_timer = QTimer(self)
+                self._close_timer.setInterval(30)
+                self._close_timer.timeout.connect(self._finish_close)
+                self._close_timer.start()
             self.controller.request_close()
+
+    def _finish_close(self):
+        """模型、设备与缩略图均已退出后再次关闭，避免递归请求。"""
+        if self.controller.can_close and self._library_page.thumbnail_loader.idle:
+            self.close()
 
 
 def _format_score(value: float | None) -> str:
