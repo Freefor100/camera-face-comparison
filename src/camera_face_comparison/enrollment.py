@@ -16,6 +16,7 @@ from .domain import Person
 from .face_engine import FaceObservation, normalize_embedding
 from .image_input import ImageInput, measure_quality
 from .repository import FaceRepository, SampleInput
+from .errors import OperationCancelled
 
 
 class FaceExtractor(Protocol):
@@ -39,12 +40,14 @@ class EnrollmentService:
         settings: Settings,
         face_engine: FaceExtractor,
         image_saver: ImageSaver,
+        cancelled: Callable[[], bool] | None = None,
     ) -> None:
         """保存录入服务依赖，不在构造阶段执行人脸推理。"""
         self.repository = repository
         self.settings = settings
         self.face_engine = face_engine
         self.image_saver = image_saver
+        self._cancelled = cancelled or (lambda: False)
 
     def create_from_inputs(self, display_name: str, inputs: list[ImageInput]) -> Person:
         """从摄像头或本地图片创建一个新身份。
@@ -71,6 +74,7 @@ class EnrollmentService:
         try:
             # 所有图片先在临时目录完成推理、保存和哈希，避免失败时留下半个人员目录。
             for index, image_input in enumerate(inputs, start=1):
+                self._check_cancelled()
                 observation = self.face_engine.extract_single_face(image_input.frame)
                 embedding = normalize_embedding(observation.embedding)
                 metrics = measure_quality(image_input.frame, observation)
@@ -87,6 +91,7 @@ class EnrollmentService:
                 )
             # 同一文件系统内的目录替换是原子的；数据库只会看到已经全部就位的图片路径。
             final_dir.parent.mkdir(parents=True, exist_ok=True)
+            self._check_cancelled()
             staging_dir.replace(final_dir)
             return self.repository.create_person_with_samples(
                 person_id=person_id,
@@ -129,6 +134,7 @@ class EnrollmentService:
         try:
             # 先准备全部新样本，任一输入无效时不会触碰人员现有的图片目录。
             for index, image_input in enumerate(inputs, start=1):
+                self._check_cancelled()
                 observation = self.face_engine.extract_single_face(image_input.frame)
                 embedding = normalize_embedding(observation.embedding)
                 metrics = measure_quality(image_input.frame, observation)
@@ -146,6 +152,7 @@ class EnrollmentService:
                         image_sha256=_sha256_file(staged_path),
                     )
                 )
+            self._check_cancelled()
             person_dir.mkdir(parents=True, exist_ok=True)
             # 数据库需要引用最终路径，所以先移动文件，并记录已移动项供事务失败时反向清理。
             for staged_path, final_path in staged_moves:
@@ -170,6 +177,11 @@ class EnrollmentService:
             raise
         finally:
             _remove_empty_directory(staging_dir.parent)
+
+    def _check_cancelled(self) -> None:
+        """只在可安全停止的处理边界取消，不打断正在提交的 SQLite 事务。"""
+        if self._cancelled():
+            raise OperationCancelled("录入已取消")
 
 
 def _cleanup_operation(path: Path, error: Exception) -> None:

@@ -75,6 +75,7 @@ QComboBox, QLineEdit {
 #resultTitle[state="matched"] { color: #58d6a5; }
 #resultTitle[state="unknown"] { color: #ff6b7a; }
 #resultTitle[state="invalid"] { color: #ffbd72; }
+#resultTitle[state="error"] { color: #ff6b7a; }
 #resultTitle[state="working"] { color: #a9b7ff; }
 #resultName { color: #f8faff; font-size: 20px; font-weight: 650; }
 #statusText, #metricText { color: #a8b3c9; }

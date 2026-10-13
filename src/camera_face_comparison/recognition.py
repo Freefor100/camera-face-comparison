@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Protocol
 
@@ -17,6 +17,7 @@ from .image_input import ImageInput, measure_quality, quality_warnings
 from .multi_frame import MultiFrameObservation
 from .open_set_policy import apply_ranked_open_set_policy
 from .repository import FaceRepository
+from .errors import OperationCancelled, classify_error
 
 
 class ProbeFaceEngine(Protocol):
@@ -57,6 +58,7 @@ class RecognitionService:
         face_engine: ProbeFaceEngine,
         face_library: FaceLibrarySnapshot,
         timing_sink: TimingSink | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> None:
         """保存识别依赖，并可选记录本次流程的各阶段耗时。
 
@@ -69,6 +71,7 @@ class RecognitionService:
         """
 
         self._repository = repository
+        self._cancelled = cancelled or (lambda: False)
         self._settings = settings
         self._face_engine = face_engine
         self._face_library = face_library
@@ -305,18 +308,28 @@ class RecognitionService:
     def _record_and_return(self, result: RecognitionResult) -> RecognitionResult:
         """记录识别结果后原样返回，保证 UI 和日志使用同一事实。"""
 
+        if self._cancelled():
+            raise OperationCancelled("识别已取消")
         log_started = perf_counter()
-        self._repository.record_recognition(
-            decision=result.status,
-            person_id=result.person_id,
-            top_score=result.top_score,
-            second_score=result.second_score,
-            score_gap=result.score_gap,
-            acceptance_score=result.acceptance_score,
-            acceptance_rule=result.acceptance_rule,
-            latency_ms=result.latency_ms,
-            reason=result.reason,
-        )
+        try:
+            self._repository.record_recognition(
+                decision=result.status,
+                person_id=result.person_id,
+                top_score=result.top_score,
+                second_score=result.second_score,
+                score_gap=result.score_gap,
+                acceptance_score=result.acceptance_score,
+                acceptance_rule=result.acceptance_rule,
+                latency_ms=result.latency_ms,
+                reason=result.reason,
+            )
+        except Exception as error:
+            failure = classify_error(error, scope="library")
+            result = replace(
+                result,
+                log_warning="识别已完成，但日志未保存：" + failure.message,
+                storage_error_kind=failure.kind,
+            )
         self._record_timing("log_write_ms", log_started)
         return result
 

@@ -50,6 +50,10 @@ class RecognitionPage(QWidget):
         layout.addLayout(header)
 
         layout.addLayout(self._build_controls())
+        self.device_status_label = QLabel("正在扫描设备。")
+        self.device_status_label.setObjectName("cardMeta")
+        self.device_status_label.setWordWrap(True)
+        layout.addWidget(self.device_status_label)
         layout.addWidget(self._build_workbench(), 1)
 
     def _build_header_status(self) -> QHBoxLayout:
@@ -174,6 +178,10 @@ class RecognitionPage(QWidget):
         result_layout.addWidget(self.result_label)
         result_layout.addWidget(self.result_name_label)
         result_layout.addWidget(self.status_label)
+        self.log_warning_label = QLabel("")
+        self.log_warning_label.setObjectName("qualityText")
+        self.log_warning_label.setWordWrap(True)
+        result_layout.addWidget(self.log_warning_label)
         result_layout.addLayout(metrics)
         result_layout.addWidget(self.quality_label)
 

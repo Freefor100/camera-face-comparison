@@ -1,28 +1,23 @@
-"""在 Qt 后台线程中执行摄像头读取、识别和样本录入任务。"""
-
-from __future__ import annotations
+"""在短工作线程中处理输入、识别、标准库和设备，并返回有编号的结构化事件。"""
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
-from threading import Lock
-from time import perf_counter
+from threading import Event, Lock
 
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
-from ..camera import CameraService
-from ..config import Settings
+from ..domain import RecognitionResult
 from ..enrollment import EnrollmentService
-from ..face_engine import FaceEngine
-from ..face_library import FaceLibrarySnapshot
+from ..errors import OperationCancelled, TaskFailure, classify_error
+from ..face_library import InMemoryFaceLibrary
 from ..image_input import ImageInput
+from ..integrity import verify_library
+from ..library_management import LibraryManagementService
 from ..recognition import RecognitionService
 from ..repository import FaceRepository
-
-
-class RecognitionCancelled(RuntimeError):
-    """表示操作者主动取消了尚未完成的摄像头识别。"""
 
 
 class RecognitionInputStream:
@@ -72,237 +67,312 @@ class RecognitionInputStream:
             if item is self._end_marker:
                 return
             if item is self._cancel_marker:
-                raise RecognitionCancelled("recognition was cancelled")
+                raise OperationCancelled("recognition was cancelled")
             if not isinstance(item, ImageInput):
                 raise TypeError("recognition input stream received an invalid item")
             yield item
 
 
+@dataclass(frozen=True)
+class RecognitionOutcome:
+    """同一次任务的判定、实际画面和明确来源，不依赖界面共享帧列表。"""
+
+    result: RecognitionResult
+    frame: np.ndarray | None
+    source: str
+
+
+@dataclass(frozen=True)
+class LibraryOutcome:
+    """区分数据库是否已提交、复查是否通过及文件清理警告。"""
+
+    committed: bool
+    message: str
+    report: object | None
+    snapshot: object | None
+    failure: TaskFailure | None = None
+
+
+class TaskWorker(QThread):
+    """提供任务编号、协作取消和统一错误出口的短工作线程。"""
+
+    result_ready = Signal(int, object)
+    worker_error = Signal(int, object)
+
+    def __init__(self, task_id, *, parent=None):
+        """记录任务身份，取消只在安全处理边界生效。"""
+        super().__init__(parent)
+        self.task_id = task_id
+        self.cancel_event = Event()
+
+    def cancel(self):
+        """请求取消，不终止正在执行的模型或数据库提交。"""
+        self.cancel_event.set()
+
+    def run(self):
+        """统一分发结果和错误，线程结束信号只负责资源退出。"""
+        try:
+            if self.cancel_event.is_set():
+                raise OperationCancelled("操作已取消")
+            self.result_ready.emit(self.task_id, self.execute())
+        except Exception as error:  # noqa: BLE001 - 线程边界必须把任意故障交给界面
+            self.worker_error.emit(self.task_id, classify_error(error, scope=self.scope))
+
+    def execute(self):
+        """由具体任务实现处理，必须在返回之前释放自己的连接。"""
+        raise NotImplementedError
+
+
+class CameraDiscoveryWorker(TaskWorker):
+    """设备扫描也放入后台，避免驱动探测阻塞窗口。"""
+
+    scope = "device"
+
+    def __init__(self, task_id, camera, parent=None):
+        """保存设备服务，不打开视频读取线程。"""
+        super().__init__(task_id, parent=parent)
+        self.camera = camera
+
+    def execute(self):
+        """返回能实际采集画面的设备列表。"""
+        return self.camera.discover()
+
+
 class CameraWorker(QThread):
-    """在后台线程中持续读取摄像头并发送画面与状态信号。"""
+    """独占摄像头读取和释放，将设备事件与识别事件分开。"""
 
     frame_ready = Signal(object)
-    worker_error = Signal(str)
+    worker_error = Signal(object)
     worker_status = Signal(str)
+    opened = Signal()
 
-    def __init__(self, camera: CameraService, index: int) -> None:
-        """创建摄像头读取线程。"""
-        super().__init__()
-        self._camera = camera
-        self._index = index
+    def __init__(self, camera, index, parent=None):
+        """保存设备编号；真正的打开和关闭都在该线程执行。"""
+        super().__init__(parent)
+        self.camera, self.index = camera, index
         self._running = True
 
-    def run(self) -> None:
-        """打开设备、循环发送帧，并在线程结束时释放设备。"""
+    def run(self):
+        """采集画面并保证退出时由原线程释放句柄。"""
         try:
-            self._camera.open(self._index)
-            self.worker_status.emit(f"已打开摄像头 {self._index}")
+            self.camera.open(self.index)
+            if not self._running:
+                return
+            self.opened.emit()
+            self.worker_status.emit(f"已打开摄像头 {self.index}。")
             while self._running:
-                frame = self._camera.read_frame()
-                # 停止请求可能发生在阻塞取帧期间。取帧返回后再次确认状态，避免把最后一帧
-                # 排入主线程事件队列，覆盖已经清空的预览区域。
+                frame = self.camera.read_frame()
                 if not self._running:
                     break
                 self.frame_ready.emit(frame)
                 self.msleep(15)
-        except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
-            # 主动停止期间，驱动可能让尚未完成的取帧调用返回失败；这不是需要展示的运行错误。
+        except Exception as error:  # noqa: BLE001 - 各平台驱动错误类型不统一
             if self._running:
-                self.worker_error.emit(str(error))
+                self.worker_error.emit(classify_error(error, scope="device"))
         finally:
-            self._camera.close()
-            self.worker_status.emit("摄像头已停止")
+            self.camera.close()
 
-    def stop(self) -> None:
-        """请求读取循环停止；真正释放设备由 `run()` 的 finally 完成。"""
+    def stop(self):
+        """仅发出停止请求，读取未结束时不从其他线程释放设备。"""
         self._running = False
 
 
-class RecognitionWorker(QThread):
-    """在后台线程中执行一次人脸检测和基于内存快照的 1:N 比对。"""
+class RecognitionWorker(TaskWorker):
+    """后台解码本地图片并执行单帧识别。"""
 
-    result_ready = Signal(object)
-    worker_error = Signal(str)
+    scope = "system"
 
     def __init__(
         self,
+        task_id,
         *,
-        database_path: Path,
-        settings: Settings,
-        face_engine: FaceEngine,
-        image_inputs: tuple[ImageInput, ...],
-        library_snapshot: FaceLibrarySnapshot,
-    ) -> None:
-        """创建一次单帧或多帧识别任务。"""
-        super().__init__()
-        self._database_path = database_path
-        self._settings = settings
-        self._face_engine = face_engine
-        self._image_inputs = image_inputs
-        self._library_snapshot = library_snapshot
+        settings,
+        face_engine,
+        library_snapshot,
+        image_inputs=(),
+        paths=(),
+        parent=None,
+    ):
+        """保留不可变标准库快照，路径在后台解码。"""
+        super().__init__(task_id, parent=parent)
+        self.settings, self.engine, self.snapshot = settings, face_engine, library_snapshot
+        self.inputs, self.paths = tuple(image_inputs), tuple(paths)
 
-    def run(self) -> None:
-        """在线程中打开独立仓库执行识别，并保证结束时关闭连接。"""
-        repository: FaceRepository | None = None
+    def execute(self):
+        """在自己的数据库连接中执行识别并返回实际参与判定的画面。"""
+        inputs = self.inputs or tuple(ImageInput.from_file(path) for path in self.paths)
+        repository = FaceRepository(self.settings.database_path)
         try:
-            # SQLite 连接不能跨线程复用，每个工作线程都打开并关闭自己的短连接。
-            repository = FaceRepository(self._database_path)
             service = RecognitionService(
                 repository,
-                self._settings,
-                self._face_engine,
-                self._library_snapshot,
+                self.settings,
+                self.engine,
+                self.snapshot,
+                cancelled=self.cancel_event.is_set,
             )
-            result = (
-                service.compare_input(self._image_inputs[0])
-                if len(self._image_inputs) == 1
-                else service.compare_inputs(self._image_inputs)
-            )
-            self.result_ready.emit(result)
-        except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
-            self.worker_error.emit(str(error))
+            result = service.compare_input(inputs[0])
+            if self.cancel_event.is_set():
+                raise OperationCancelled("识别已取消")
+            return RecognitionOutcome(result, inputs[0].frame, inputs[0].source_type)
         finally:
-            if repository is not None:
-                repository.close()
+            repository.close()
 
 
-class CameraRecognitionWorker(QThread):
-    """在摄像头继续采集时逐帧检测，并在输入结束后完成一次识别。"""
-
-    result_ready = Signal(object)
-    worker_error = Signal(str)
+class CameraRecognitionWorker(RecognitionWorker):
+    """边接收五帧边检测，最后只检索一次标准库。"""
 
     def __init__(
         self,
+        task_id,
         *,
-        database_path: Path,
-        settings: Settings,
-        face_engine: FaceEngine,
-        library_snapshot: FaceLibrarySnapshot,
-        frame_count: int,
-        started_at: float | None = None,
-    ) -> None:
-        """创建一个接收流式摄像头输入的识别任务。"""
+        settings,
+        face_engine,
+        library_snapshot,
+        frame_count,
+        started_at,
+        parent=None,
+    ):
+        """输入队列和实际画面归同一任务所有，避免迟到事件串到下一轮。"""
+        super().__init__(
+            task_id,
+            settings=settings,
+            face_engine=face_engine,
+            library_snapshot=library_snapshot,
+            parent=parent,
+        )
+        self.frame_count, self.started_at = frame_count, started_at
+        self.stream = RecognitionInputStream()
+        self.frames = []
 
-        super().__init__()
-        self._database_path = database_path
-        self._settings = settings
-        self._face_engine = face_engine
-        self._library_snapshot = library_snapshot
-        self._frame_count = frame_count
-        self._started_at = perf_counter() if started_at is None else started_at
-        self._inputs = RecognitionInputStream()
-        self._cancelled = False
+    def submit(self, image_input):
+        """先记录本任务画面，再提交给阻塞消费者。"""
+        self.frames.append(image_input)
+        self.stream.submit(image_input)
 
-    def submit(self, image_input: ImageInput) -> None:
-        """把一张新采集帧提交给已经运行的识别线程。"""
+    def finish_inputs(self):
+        """结束正常输入，不与取消混淆。"""
+        self.stream.finish()
 
-        self._inputs.submit(image_input)
+    def cancel(self):
+        """取消尚未处理完的识别并唤醒队列。"""
+        super().cancel()
+        self.stream.cancel()
 
-    def finish_inputs(self) -> None:
-        """通知识别线程摄像头采集已经结束。"""
-
-        self._inputs.finish()
-
-    def cancel(self) -> None:
-        """取消尚未完成的采集，保证等待输入的线程可以退出。"""
-
-        self._cancelled = True
-        # 取消标记必须与正常结束标记分开；正常结束会生成判定并写日志，取消则直接终止任务。
-        self._inputs.cancel()
-
-    def run(self) -> None:
-        """逐帧消费输入，并只在未取消时发送最终结果。"""
-
-        repository: FaceRepository | None = None
+    def execute(self):
+        """返回选中帧与同一判定；全部帧无效时仍返回实际输入来源。"""
+        repository = FaceRepository(self.settings.database_path)
         try:
-            # 识别服务直接迭代阻塞队列，让人脸检测与主线程后续采帧重叠执行。
-            repository = FaceRepository(self._database_path)
             service = RecognitionService(
                 repository,
-                self._settings,
-                self._face_engine,
-                self._library_snapshot,
+                self.settings,
+                self.engine,
+                self.snapshot,
+                cancelled=self.cancel_event.is_set,
             )
             result = service.compare_inputs(
-                self._inputs,
-                frame_count=self._frame_count,
-                started_at=self._started_at,
+                self.stream, frame_count=self.frame_count, started_at=self.started_at
             )
-            if not self._cancelled:
-                self.result_ready.emit(result)
-        except Exception as error:  # noqa: BLE001 - 工作线程异常必须展示给用户
-            if not self._cancelled:
-                self.worker_error.emit(str(error))
+            if self.cancel_event.is_set():
+                raise OperationCancelled("识别已取消")
+            index = result.selected_frame_index or 0
+            frame = self.frames[index].frame if self.frames else None
+            return RecognitionOutcome(result, frame, "camera")
         finally:
-            if repository is not None:
-                repository.close()
+            repository.close()
 
 
-class EnrollmentWorker(QThread):
-    """在独立短线程中完成图片特征提取和标准库写入。"""
+class LibraryWorker(TaskWorker):
+    """后台执行录入、管理和复查，返回同源矩阵与展示元信息。"""
 
-    result_ready = Signal(object)
-    worker_error = Signal(str)
+    scope = "library"
 
     def __init__(
         self,
+        task_id,
         *,
-        database_path: Path,
-        settings: Settings,
-        face_engine: FaceEngine,
-        operation: str,
-        image_inputs: tuple[ImageInput, ...],
-        display_name: str | None = None,
-        person_id: str | None = None,
-    ) -> None:
-        """创建一次新增或追加样本任务。"""
-        super().__init__()
-        self._database_path = database_path
-        self._settings = settings
-        self._face_engine = face_engine
-        self._operation = operation
-        self._image_inputs = image_inputs
-        self._display_name = display_name
-        self._person_id = person_id
+        settings,
+        face_engine,
+        operation="check",
+        paths=(),
+        inputs=(),
+        person_id=None,
+        sample_id=None,
+        name=None,
+        parent=None,
+    ):
+        """保存命令参数，构造时不读取数据库或文件。"""
+        super().__init__(task_id, parent=parent)
+        self.settings, self.engine, self.operation = settings, face_engine, operation
+        self.paths, self.inputs = tuple(paths), tuple(inputs)
+        self.person_id, self.sample_id, self.name = person_id, sample_id, name
 
-    def run(self) -> None:
-        """在线程中执行录入服务，并在结束时关闭独立数据库连接。"""
-        repository: FaceRepository | None = None
+    def execute(self):
+        """提交后复查失败也保留已提交事实，不能报告成操作回滚。"""
+        repository = FaceRepository(self.settings.database_path)
+        committed, message = False, "标准库检查已完成。"
         try:
-            repository = FaceRepository(self._database_path)
-            service = EnrollmentService(
-                repository=repository,
-                settings=self._settings,
-                face_engine=self._face_engine,
-                image_saver=_save_bgr_image,
-            )
-            if self._operation == "create":
-                if self._display_name is None:
-                    raise ValueError("display name is required for person creation")
-                person = service.create_from_inputs(self._display_name, self._image_inputs)
-                self.result_ready.emit((self._operation, person))
-            elif self._operation == "append":
-                if self._person_id is None:
-                    raise ValueError("person id is required for sample append")
-                count = service.append_from_inputs(self._person_id, self._image_inputs)
-                self.result_ready.emit((self._operation, self._person_id, count))
-            else:
-                raise ValueError(f"unknown enrollment operation: {self._operation}")
-        except Exception as error:  # noqa: BLE001 - 录入异常必须反馈给界面
-            self.worker_error.emit(str(error))
+            management = LibraryManagementService(repository, self.settings)
+            if self.operation in {"create", "append"}:
+                inputs = list(self.inputs) or [ImageInput.from_file(path) for path in self.paths]
+                service = EnrollmentService(
+                    repository=repository,
+                    settings=self.settings,
+                    face_engine=self.engine,
+                    image_saver=_save_bgr_image,
+                    cancelled=self.cancel_event.is_set,
+                )
+                if self.operation == "create":
+                    person = service.create_from_inputs(self.name, inputs)
+                    message = f"“{person.display_name}”已录入标准库。"
+                else:
+                    count = service.append_from_inputs(self.person_id, inputs)
+                    message = f"已追加 {count} 张有效单人脸图片。"
+                committed = True
+            elif self.operation == "rename":
+                person = management.rename_person(self.person_id, self.name)
+                committed, message = True, f"人员姓名已修改为“{person.display_name}”。"
+            elif self.operation in {"delete_person", "delete_sample"}:
+                result = (
+                    management.delete_person(self.person_id)
+                    if self.operation == "delete_person"
+                    else management.delete_sample(self.person_id, self.sample_id)
+                )
+                committed, message = (
+                    True,
+                    "人员已删除。" if self.operation == "delete_person" else "样本已删除。",
+                )
+                if result.cleanup_failures:
+                    message += (
+                        f"有 {len(result.cleanup_failures)} 个图片文件未能清理，详见复查警告。"
+                    )
+            elif self.operation != "check":
+                raise ValueError("无效的标准库操作")
+            try:
+                report = verify_library(repository, self.settings)
+                snapshot = (
+                    InMemoryFaceLibrary.from_samples(report.people, report.samples).snapshot()
+                    if report.is_valid
+                    else None
+                )
+                return LibraryOutcome(committed, message, report, snapshot)
+            except Exception as error:
+                if not committed:
+                    raise
+                return LibraryOutcome(
+                    True,
+                    "修改已保存，但标准库复查失败，暂时不能识别。",
+                    None,
+                    None,
+                    classify_error(error, scope="library"),
+                )
         finally:
-            if repository is not None:
-                repository.close()
+            repository.close()
 
 
-def _save_bgr_image(path: Path, frame: np.ndarray) -> None:
-    """使用 OpenCV 将 BGR 图像保存到指定路径。"""
+def _save_bgr_image(path: Path, frame: np.ndarray):
+    """保存本次录入图片，失败由服务负责回滚与补偿。"""
+    import cv2
 
-    try:
-        import cv2
-    except ImportError as error:
-        raise RuntimeError("OpenCV is not installed; install the project dependencies first") from error
     path.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(path), frame):
-        raise RuntimeError(f"could not save image to {path}")
+        raise OSError(f"图片保存失败：{path}")

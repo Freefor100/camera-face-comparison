@@ -51,9 +51,7 @@ class SampleThumbnail(QLabel):
         super().resizeEvent(event)
         if not self._source_pixmap.isNull():
             self.setPixmap(
-                self._source_pixmap.scaled(
-                    self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
+                self._source_pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
 
 
@@ -97,6 +95,11 @@ class LibraryPage(QWidget):
         subtitle.setObjectName("pageSubtitle")
         layout.addWidget(title)
         layout.addWidget(subtitle)
+        self.status_label = QLabel("正在检查标准库。")
+        self.status_label.setObjectName("statusText")
+        self.status_label.setWordWrap(True)
+        self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.status_label)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("libraryWorkbench")
@@ -282,9 +285,7 @@ class LibraryPage(QWidget):
         delete_button.setObjectName("sampleDeleteButton")
         delete_button.setProperty("role", "danger")
         delete_button.clicked.connect(
-            lambda _checked=False, sample_id=sample.id: self.delete_sample_requested.emit(
-                sample_id
-            )
+            lambda _checked=False, sample_id=sample.id: self.delete_sample_requested.emit(sample_id)
         )
         delete_button.setEnabled(self._management_enabled)
         self._sample_delete_buttons.append(delete_button)

@@ -15,6 +15,7 @@ from uuid import uuid4
 import numpy as np
 
 from .domain import FaceSample, Person, SampleMetadata
+from .errors import LibraryUnavailableError
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ class FaceRepository:
             and self._faces_root.exists()
             and any(path.is_file() for path in self._faces_root.rglob("*"))
         ):
-            raise RuntimeError("数据库缺失，但标准库图片仍存在；请恢复数据库后重新检查")
+            raise LibraryUnavailableError("数据库缺失，但标准库图片仍存在；请恢复数据库后重新检查")
         self._connection = sqlite3.connect(database_path, timeout=5.0)
         self._connection.row_factory = sqlite3.Row
         # 外键保护逻辑关系，WAL 允许界面读取与工作线程写日志并行，busy_timeout 吸收短暂写竞争。
@@ -470,7 +471,7 @@ class FaceRepository:
                 for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
             )
             if actual != expected_columns:
-                raise RuntimeError(f"数据库表结构无效：{table}；请恢复正确数据后重新检查")
+                raise LibraryUnavailableError(f"数据库表结构无效：{table}；请恢复正确数据后重新检查")
 
     @staticmethod
     def _make_sample(
