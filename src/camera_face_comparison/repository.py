@@ -361,14 +361,12 @@ class FaceRepository:
 
     @staticmethod
     def _metadata_from_row(row) -> SampleMetadata:
-        """仅恢复样本编号、归属、路径和来源。"""
+        """校验管理所需的编号、归属和路径，来源原值留给样本诊断。"""
         if any(
             not isinstance(row[key], str) or not row[key].strip()
             for key in ("id", "person_id", "image_path")
         ):
             raise ValueError("样本编号、人员编号或图片路径无效")
-        if row["source_type"] not in {"file", "camera", "dataset"}:
-            raise ValueError("样本来源无效")
         return SampleMetadata(row["id"], row["person_id"], row["image_path"], row["source_type"])
 
     def record_recognition(
@@ -574,6 +572,8 @@ class FaceRepository:
         # copy() 解除数组对 SQLite BLOB 缓冲区的只读视图依赖，返回值可安全独立持有。
         embedding = np.frombuffer(row["embedding_blob"], dtype=np.float32).copy()
         FaceRepository._metadata_from_row(row)
+        if row["source_type"] not in {"file", "camera", "dataset"}:
+            raise ValueError(f"样本来源无效：{row['source_type']!r}")
         if (
             embedding.size != 512
             or embedding.size != row["embedding_dim"]

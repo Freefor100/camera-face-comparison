@@ -285,7 +285,12 @@ class LibraryPage(QWidget):
             return
         samples = self._samples_by_person.get(person_id, ())
         self.selected_name_label.setText(person.display_name)
-        self.selected_count_label.setText(f"样本数 {len(samples)}")
+        valid_count = sum(sample.recognition_issue is None for sample in samples)
+        self.selected_count_label.setText(
+            f"样本数 {len(samples)}"
+            if valid_count == len(samples)
+            else f"样本数 {len(samples)}，其中 {valid_count} 张参与识别"
+        )
         for index, sample in enumerate(samples):
             self._sample_cards.append(self._sample_card(sample, index))
         self._relayout_sample_cards()
@@ -308,14 +313,22 @@ class LibraryPage(QWidget):
         self._image_labels[sample.id] = image_label
         try:
             resolved = path.resolve()
-            if resolved.is_relative_to((self._data_dir / "faces").resolve()):
+            if sample.image_issue:
+                # 已替换照片不能借缩略图冒充原登记输入，向量可用性由另一项检查决定。
+                image_label.setText("照片不可用")
+            elif resolved.is_relative_to((self._data_dir / "faces").resolve()):
                 self.thumbnail_loader.request(resolved, sample.id, self._selection_generation)
             else:
                 image_label.setText("图片不可用")
         except (ValueError, OSError):
             # 诊断页仍展示可读元信息；坏路径不能阻断后续正常样本卡片。
             image_label.setText("图片不可用")
-        caption = QLabel(f"样本 {index + 1}")
+        caption = QLabel(
+            f"样本 {index + 1}" + (" · 不参与识别" if sample.recognition_issue else "")
+        )
+        card.setToolTip(
+            "\n".join(issue for issue in (sample.image_issue, sample.recognition_issue) if issue)
+        )
         caption.setObjectName("sampleCaption")
         caption.setAlignment(Qt.AlignCenter)
         delete_button = QPushButton("删除样本")

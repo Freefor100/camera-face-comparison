@@ -350,7 +350,9 @@ class LibraryWorker(TaskWorker):
             try:
                 report = verify_library(repository, self.settings)
                 snapshot = (
-                    InMemoryFaceLibrary.from_samples(report.people, report.samples).snapshot()
+                    InMemoryFaceLibrary.from_samples(
+                        report.recognizable_people, report.samples
+                    ).snapshot()
                     if report.is_valid
                     else None
                 )

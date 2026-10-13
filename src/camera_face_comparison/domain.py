@@ -36,12 +36,15 @@ class FaceSample:
 
 @dataclass(frozen=True)
 class SampleMetadata:
-    """供展示和删除使用的样本元信息，不携带向量或质量记录。"""
+    """供展示和删除使用的元信息，照片与识别可用性分别由复查标注。"""
 
     id: str
     person_id: str
     image_path: str
-    source_type: str
+    # 诊断元信息保留来源原值；来源是否合格由样本解码单独判断，不妨碍安全删除。
+    source_type: object
+    image_issue: str | None = None
+    recognition_issue: str | None = None
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 """用一次数据库一致读取诊断标准库，并提供同源的矩阵和展示数据。"""
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +23,7 @@ class IntegrityFailure:
 
 @dataclass(frozen=True)
 class LibraryVerificationReport:
-    """检查结果及来自同一数据库快照的人员、样本和展示元信息。"""
+    """同源目录与有效向量；局部样本问题只警告，结构错误阻断整库。"""
 
     failures: tuple[IntegrityFailure, ...]
     warnings: tuple[str, ...] = ()
@@ -33,12 +33,18 @@ class LibraryVerificationReport:
 
     @property
     def is_valid(self) -> bool:
-        """返回能否安全构建所有人员原型，清理警告不阻断识别。"""
+        """返回是否允许使用已验证样本，不要求所有照片和人员均可识别。"""
         return not self.failures
+
+    @property
+    def recognizable_people(self) -> tuple[Person, ...]:
+        """返回仍有有效向量的人员，完整人员目录保留用于管理。"""
+        person_ids = {sample.person_id for sample in self.samples}
+        return tuple(person for person in self.people if person.id in person_ids)
 
 
 def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVerificationReport:
-    """一次读取结构和记录，再逐条汇总向量、文件和身份不变量。"""
+    """一次读取后分开检查照片和向量，只把有效向量交给识别。"""
     people_rows, sample_rows, checks, foreign_keys = repository.read_library_rows()
     failures = [
         IntegrityFailure("sqlite_integrity_error", value)
@@ -46,7 +52,7 @@ def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVer
         if value.lower() != "ok"
     ]
     failures.extend(IntegrityFailure("foreign_key_violation", value) for value in foreign_keys)
-    people, samples, metadata = [], [], []
+    people, samples, metadata, warnings = [], [], [], []
     for row in people_rows:
         try:
             people.append(repository._person_from_row(row))
@@ -58,40 +64,59 @@ def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVer
     for row in sample_rows:
         sample_id = str(row["id"])
         try:
-            metadata.append(repository._metadata_from_row(row))
-            sample = repository._sample_from_row(row)
-            samples.append(sample)
-            grouped.setdefault(sample.person_id, []).append(sample.embedding)
-            path = (settings.data_dir / sample.image_path).resolve()
+            item = repository._metadata_from_row(row)
+            path = (settings.data_dir / item.image_path).resolve()
             if not path.is_relative_to(root) or path == root:
                 failures.append(
                     IntegrityFailure("image_path_outside_library", str(path), sample_id)
                 )
+                metadata.append(replace(item, image_issue="照片路径不在标准库目录内。"))
                 continue
             if path in paths:
                 failures.append(IntegrityFailure("shared_image_path", str(path), sample_id))
             paths.add(path)
-            if not path.is_file():
-                failures.append(IntegrityFailure("image_missing", str(path), sample_id))
-            elif sample.image_sha256 is None:
-                failures.append(IntegrityFailure("missing_image_hash", str(path), sample_id))
-            elif _sha256_file(path) != sample.image_sha256:
-                failures.append(IntegrityFailure("image_hash_mismatch", str(path), sample_id))
+        except (ValueError, TypeError, OSError) as error:
+            # 归属或路径不可恢复时不能安全管理文件，仍按整库结构异常处理。
+            failures.append(IntegrityFailure("invalid_sample_metadata", str(error), sample_id))
+            continue
+
+        image_issue = _check_image(path, row["image_sha256"])
+        if image_issue:
+            warnings.append(f"样本 {sample_id}：{image_issue} 路径：{item.image_path}")
+        recognition_issue = None
+        try:
+            sample = repository._sample_from_row(row)
             digest = hashlib.sha256(sample.embedding.astype(np.float32).tobytes()).hexdigest()
             if sample.embedding_sha256 != digest:
-                failures.append(IntegrityFailure("embedding_hash_mismatch", sample_id, sample_id))
+                raise ValueError("向量哈希与登记值不一致")
+            # 哈希和向量契约全部通过后才纳入平均向量；坏样本不能污染正常样本。
+            samples.append(sample)
+            grouped.setdefault(sample.person_id, []).append(sample.embedding)
         except (ValueError, TypeError, AttributeError, OverflowError, OSError) as error:
-            failures.append(IntegrityFailure("invalid_sample", str(error), sample_id))
+            recognition_issue = f"样本特征数据异常，已排除识别：{error}"
+            warnings.append(f"样本 {sample_id}：{recognition_issue}")
+        metadata.append(replace(item, image_issue=image_issue, recognition_issue=recognition_issue))
+    excluded_people = set()
     for person in people:
         vectors = grouped.get(person.id, [])
         if not vectors:
-            failures.append(IntegrityFailure("person_without_valid_samples", person.display_name))
+            warnings.append(
+                f"“{person.display_name}”没有有效特征向量，不参与识别；可追加有效样本。"
+            )
         else:
             try:
                 normalize_embedding(np.mean([normalize_embedding(v) for v in vectors], axis=0))
             except ValueError as error:
-                failures.append(IntegrityFailure("invalid_person_prototype", str(error)))
-    warnings = []
+                excluded_people.add(person.id)
+                warnings.append(f"“{person.display_name}”无法形成有效平均向量，不参与识别：{error}")
+    if excluded_people:
+        samples = [sample for sample in samples if sample.person_id not in excluded_people]
+        metadata = [
+            replace(item, recognition_issue="人员平均向量无效，不参与识别。")
+            if item.person_id in excluded_people
+            else item
+            for item in metadata
+        ]
     try:
         # 只扫描受管目录，遗留文件不自动清理，也不误报成识别数据损坏。
         for path in root.rglob("*"):
@@ -102,6 +127,20 @@ def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVer
     return LibraryVerificationReport(
         tuple(failures), tuple(warnings), tuple(people), tuple(samples), tuple(metadata)
     )
+
+
+def _check_image(path: Path, expected_hash: str | None) -> str | None:
+    """检查受管照片的文件字节；照片问题不改变已保存向量，也不自动修复。"""
+    try:
+        if not path.is_file():
+            return "照片缺失或不是普通文件；有效向量仍可使用。"
+        if expected_hash is None:
+            return "照片缺少登记哈希，无法确认原文件；有效向量仍可使用。"
+        if _sha256_file(path) != expected_hash:
+            return "照片内容发生变化，不再展示为原登记照片；有效向量仍可使用。"
+    except OSError as error:
+        return f"照片无法读取；有效向量仍可使用。原因：{error}"
+    return None
 
 
 def _sha256_file(path: Path) -> str:

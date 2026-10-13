@@ -88,7 +88,7 @@ def main():
                 assert report.is_valid
                 started = perf_counter()
                 snapshot = InMemoryFaceLibrary.from_samples(
-                    report.people, report.samples
+                    report.recognizable_people, report.samples
                 ).snapshot()
                 measurements["same_records_matrix"].append((perf_counter() - started) * 1000)
                 started = perf_counter()

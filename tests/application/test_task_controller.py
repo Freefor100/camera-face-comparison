@@ -154,6 +154,96 @@ def test_delete_clears_result_and_reports_only_in_library_page(tmp_path, app, mo
     wait_for(app, lambda: window.controller.can_close)
 
 
+@pytest.mark.parametrize("image_problem", ["missing", "replaced"])
+def test_photo_warning_stays_in_library_page_and_recognition_remains_available(
+    tmp_path,
+    app,
+    image_problem,
+):
+    """实际复查的照片警告不能污染识别结论，也不能禁用正常向量。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        window.controller.library_operation(
+            "create",
+            name="甲",
+            inputs=(ImageInput.from_camera(np.full((180, 180, 3), 120, dtype=np.uint8)),),
+        )
+        wait_for(app, lambda: window.controller.idle)
+        sample = window.controller.catalog.metadata[0]
+        photo = tmp_path / sample.image_path
+        probe = tmp_path / "probe.jpg"
+        probe.write_bytes(photo.read_bytes())
+        window.controller.recognize_file(probe)
+        wait_for(app, lambda: window.controller.idle)
+        assert window.result_label.property("state") == "matched"
+        if image_problem == "missing":
+            photo.unlink()
+        else:
+            cv2.imwrite(str(photo), np.zeros((180, 180, 3), dtype=np.uint8))
+        window.recheck_library()
+        wait_for(app, lambda: window.controller.idle)
+        assert window.controller.library_valid
+        assert window.import_compare_button.isEnabled()
+        assert window.result_label.property("state") == "idle"
+        assert window.controller.catalog.metadata[0].image_issue
+        assert window._library_page._image_labels[sample.id].pixmap().isNull()
+        assert "照片" in window._diagnostic_detail
+        assert "提示" in window.integrity_label.text()
+        assert "照片" not in window.status_label.text()
+        window.controller.recognize_file(probe)
+        wait_for(app, lambda: window.controller.idle)
+        assert window.result_label.property("state") == "matched"
+        assert not window._recognition_page.log_warning_label.text()
+        assert "照片" not in window.status_label.text()
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_excluded_identity_can_receive_new_samples_and_rejoin_search(tmp_path, app):
+    """最后一个向量损坏后仍能追加新样本恢复身份，其他人员保持可用。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        for name, color in (("甲", 100), ("乙", 140)):
+            window.controller.library_operation(
+                "create",
+                name=name,
+                inputs=(ImageInput.from_camera(np.full((180, 180, 3), color, dtype=np.uint8)),),
+            )
+            wait_for(app, lambda: window.controller.idle)
+        people = {person.display_name: person.id for person in window.controller.catalog.people}
+        repository = FaceRepository(window.controller.settings.database_path)
+        repository._connection.execute(
+            "UPDATE face_samples SET embedding_dim=511 WHERE person_id=?",
+            (people["甲"],),
+        )
+        repository._connection.commit()
+        repository.close()
+        window.recheck_library()
+        wait_for(app, lambda: window.controller.idle)
+        assert window.controller.library_valid
+        assert window.controller.face_library.snapshot().person_ids == (people["乙"],)
+        assert len(window.controller.catalog.people) == 2
+        assert window.append_local_button.isEnabled()
+        window.controller.library_operation(
+            "append",
+            person_id=people["甲"],
+            inputs=(ImageInput.from_camera(np.full((180, 180, 3), 180, dtype=np.uint8)),),
+        )
+        wait_for(app, lambda: window.controller.idle)
+        assert window.controller.library_valid
+        assert set(window.controller.face_library.snapshot().person_ids) == set(people.values())
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
 def test_log_failure_keeps_completed_recognition_result(tmp_path, app, monkeypatch):
     """日志故障只能附带警告，不能把已经计算的未知判定改成系统失败。"""
     window = window_at(tmp_path)
@@ -218,6 +308,109 @@ def test_late_task_error_and_late_camera_frame_cannot_change_current_view(tmp_pa
     assert window.preview_label.pixmap().isNull()
     assert "已打开" not in window._recognition_page.device_status_label.text()
     window.close()
+
+
+def test_finished_task_notifications_with_same_id_are_ignored(tmp_path, app):
+    """最后一个任务已退出时，同编号迟到错误与结果也不能重新写入界面。"""
+    from camera_face_comparison.errors import TaskFailure
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    outcomes = []
+    window.controller.result_ready.connect(outcomes.append)
+    photo = tmp_path / "probe.jpg"
+    cv2.imwrite(str(photo), np.full((180, 180, 3), 120, dtype=np.uint8))
+    try:
+        window.controller.recognize_file(photo)
+        wait_for(app, lambda: window.controller.idle)
+        task_id = window.controller._task_id
+        shown = window.result_label.property("state")
+        window.controller._on_error(
+            task_id, TaskFailure("storage_unavailable", "迟到错误", "旧通知")
+        )
+        assert window.controller.library_valid
+        assert window.result_label.property("state") == shown
+        window.controller._on_result(task_id, outcomes[0])
+        assert len(outcomes) == 1
+        assert window.result_label.property("state") == shown
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_cancelled_current_task_still_reports_storage_unavailable(tmp_path, app, monkeypatch):
+    """取消只抑制本次识别错误文案，当前线程发现坏库仍须撤销库健康状态。"""
+    entered, release = Event(), Event()
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    window.start_camera()
+    wait_for(app, lambda: window.controller.current_frame is not None)
+
+    def fail_open_after_cancellation(*args):
+        """在真实数据库打开边界等待取消，再模拟不可读故障。"""
+        entered.set()
+        release.wait(3)
+        raise sqlite3.DatabaseError("malformed")
+
+    monkeypatch.setattr(
+        "camera_face_comparison.ui.workers.FaceRepository", fail_open_after_cancellation
+    )
+    try:
+        window.compare_current_frame()
+        wait_for(app, entered.is_set)
+        window.stop_camera()
+        release.set()
+        wait_for(app, lambda: window.controller.idle)
+        assert not window.controller.library_valid
+        assert not window.import_compare_button.isEnabled()
+        assert "malformed" in window._diagnostic_detail
+        assert window.result_label.property("state") != "error"
+        assert "取消" in window.result_label.text()
+    finally:
+        release.set()
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_invalid_library_does_not_claim_candidates_are_searchable(tmp_path, app):
+    """局部向量有效不等于整库已启用，暂停时不能显示可识别人数。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        for name, color in (("甲", 100), ("乙", 140)):
+            window.controller.library_operation(
+                "create",
+                name=name,
+                inputs=(ImageInput.from_camera(np.full((180, 180, 3), color, dtype=np.uint8)),),
+            )
+            wait_for(app, lambda: window.controller.idle)
+        people = {person.display_name: person.id for person in window.controller.catalog.people}
+        photo = next(
+            item.image_path
+            for item in window.controller.catalog.metadata
+            if item.person_id == people["甲"]
+        )
+        repository = FaceRepository(window.controller.settings.database_path)
+        repository._connection.execute(
+            "UPDATE face_samples SET embedding_dim=511 WHERE person_id=?",
+            (people["甲"],),
+        )
+        repository._connection.execute(
+            "UPDATE face_samples SET image_path=? WHERE person_id=?",
+            (photo, people["乙"]),
+        )
+        repository._connection.commit()
+        repository.close()
+        window.recheck_library()
+        wait_for(app, lambda: window.controller.idle)
+        assert not window.controller.library_valid
+        assert window.controller.face_library.snapshot().person_ids == ()
+        assert "检索未启用" in window._recognition_page.library_summary_label.text()
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
 
 
 def test_rollback_uncertainty_disables_business_until_recheck(tmp_path, app, monkeypatch):

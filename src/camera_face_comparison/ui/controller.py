@@ -195,7 +195,7 @@ class TaskController(QObject):
 
     def _on_result(self, task_id, outcome):
         """当前任务才能发布结果，提交事实与复查结果分别处理。"""
-        if task_id != self._task_id or self._cancelled:
+        if task_id != self._task_id or self.worker is None or self._cancelled:
             return
         if self.state.task in {"recognition", "camera_recognition"}:
             if outcome.result.storage_error_kind == "storage_unavailable":
@@ -215,7 +215,7 @@ class TaskController(QObject):
             self._set_state(library="healthy")
             message = outcome.message
             if outcome.report.warnings:
-                message += f" 有 {len(outcome.report.warnings)} 项文件清理警告。"
+                message += f" 有 {len(outcome.report.warnings)} 项标准库提示，详见诊断详情。"
                 message += "\n" + "\n".join(outcome.report.warnings)
         else:
             self._invalidate("unavailable" if outcome.failure else "invalid")
@@ -240,15 +240,18 @@ class TaskController(QObject):
 
     def _on_error(self, task_id, failure):
         """失败立即停止采集，线程退出之后才恢复按钮。"""
-        if task_id != self._task_id:
+        if task_id != self._task_id or self.worker is None:
             return
         self._stop_collection()
         if failure.kind == "storage_unavailable" or self.state.task == "check":
             self._invalidate("unavailable")
+        if failure.kind == "storage_unavailable":
+            # 取消只取消本次识别显示，不能掩盖当前线程发现的标准库故障。
+            self.library_status.emit(failure.message + "\n" + failure.detail)
         if not self._cancelled and failure.kind != "cancelled":
             if self.state.task in {"recognition", "camera_recognition"}:
                 self.recognition_error.emit(failure)
-            else:
+            elif failure.kind != "storage_unavailable":
                 self.library_status.emit(failure.message + "\n" + failure.detail)
 
     def _on_finished(self, task_id, worker):

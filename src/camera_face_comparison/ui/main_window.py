@@ -124,8 +124,14 @@ class MainWindow(QMainWindow):
             "invalid": "检查未通过",
             "unavailable": "无法读取",
         }
+        has_warnings = (
+            state.library == "healthy"
+            and self.controller.catalog is not None
+            and bool(self.controller.catalog.warnings)
+        )
         self._recognition_page.set_integrity_state(
-            "数据：" + labels[state.library], warning=state.library != "healthy"
+            "数据：有提示" if has_warnings else "数据：" + labels[state.library],
+            warning=state.library != "healthy" or has_warnings,
         )
         self.integrity_label.setToolTip(
             "这是最近一次检查的结果，不是实时监控。"
@@ -134,6 +140,19 @@ class MainWindow(QMainWindow):
         )
         if self.controller.catalog is None:
             self._recognition_page.library_summary_label.setText("标准库：--")
+        else:
+            total = len(self.controller.catalog.people)
+            if state.library == "healthy":
+                count = len(self.controller.face_library.snapshot().person_ids)
+                summary = (
+                    f"标准库：{count} 人"
+                    if count == total
+                    else f"可识别：{count} 人／已登记：{total} 人"
+                )
+            else:
+                summary = f"标准库：{total} 人，检索未启用"
+            # 目录可供诊断不等于矩阵已经发布，人数必须与实际业务状态一致。
+            self._recognition_page.library_summary_label.setText(summary)
         if state.closing:
             self.statusBar().showMessage("正在等待后台任务和设备退出，窗口会在安全释放后关闭。")
 
@@ -180,7 +199,6 @@ class MainWindow(QMainWindow):
         self._library_page.set_people(
             list(report.people), {pid: tuple(items) for pid, items in grouped.items()}
         )
-        self._recognition_page.library_summary_label.setText(f"标准库：{len(report.people)} 人")
 
     def refresh_cameras(self):
         """请求后台扫描设备，驱动阻塞不会冻结主窗口。"""

@@ -113,8 +113,9 @@ def test_corrupt_sample_is_reported_and_deletion_does_not_decode_embedding(tmp_p
     repository._connection.execute("UPDATE face_samples SET embedding_dim=511 WHERE id=?", (bad,))
     repository._connection.commit()
     report = verify_library(repository, settings)
-    assert not report.is_valid
-    assert any(item.kind == "invalid_sample" for item in report.failures)
+    assert report.is_valid
+    assert bad not in {item.id for item in report.samples}
+    assert next(item for item in report.metadata if item.id == bad).recognition_issue
     repository._connection.set_authorizer(
         lambda action, table, column, *_: (
             sqlite3.SQLITE_DENY
@@ -166,10 +167,40 @@ def test_quality_overflow_does_not_abort_other_sample_diagnostics(tmp_path):
     )
     repository._connection.commit()
     report = verify_library(repository, settings)
-    assert {item.sample_id for item in report.failures if item.kind == "invalid_sample"} == {
+    assert report.is_valid
+    assert {item.id for item in report.metadata if item.recognition_issue} == {
         first.id,
         second.id,
     }
+    repository.close()
+
+
+def test_bad_source_tag_is_local_and_person_can_still_be_deleted(tmp_path):
+    """来源标签损坏不影响别人的向量，也不妨碍按安全归属删除该人员。"""
+    from camera_face_comparison.config import load_settings
+    from camera_face_comparison.integrity import verify_library
+    from camera_face_comparison.library_management import LibraryManagementService
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    for person_id, name in (("a", "甲"), ("b", "乙")):
+        repository.create_person_with_samples(
+            person_id=person_id,
+            display_name=name,
+            samples=[sample(f"faces/{person_id}/sample.jpg")],
+        )
+    repository._connection.execute(
+        "UPDATE face_samples SET source_type='broken' WHERE person_id='a'"
+    )
+    repository._connection.commit()
+    report = verify_library(repository, settings)
+    assert report.is_valid
+    assert [person.id for person in report.recognizable_people] == ["b"]
+    assert next(item for item in report.metadata if item.person_id == "a").recognition_issue
+    assert any("broken" in warning for warning in report.warnings)
+    removed = LibraryManagementService(repository, settings).delete_person("a")
+    assert removed.removed_sample_count == 1
+    assert [person.id for person in repository.list_people()] == ["b"]
     repository.close()
 
 
