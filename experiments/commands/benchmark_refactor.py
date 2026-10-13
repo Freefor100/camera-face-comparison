@@ -25,6 +25,23 @@ from experiments.commands.benchmark_production_runtime import (
 from experiments.face_evaluation.experiment_artifacts import write_json_atomic
 
 
+def _load_reference_engine(settings):
+    """仅实验恢复旧加载顺序，以相同 CPU 算子核对加载重构等价性。"""
+    from insightface.app import FaceAnalysis
+
+    from camera_face_comparison import face_engine as engine_module
+
+    backend = engine_module.detect_execution_backend()
+    analyzer = FaceAnalysis(
+        name="buffalo_l",
+        root=str(settings.data_dir),
+        providers=list(backend.providers),
+        allowed_modules=["detection", "recognition"],
+    )
+    analyzer.prepare(ctx_id=backend.context_id, det_size=(640, 640))
+    return FaceEngine(analyzer=analyzer, backend=backend)
+
+
 def summarize(values):
     """返回毫秒测量的平均值、中位数和 95% 分位。"""
     return {
@@ -39,6 +56,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--backend", choices=("auto", "cpu"), default="auto")
+    parser.add_argument("--reference-loader", action="store_true")
     args = parser.parse_args()
     protocol_path = Path("data/experiments/phase4/protocol.json")
     cache = Path("data/logs/cache/lfw_raw.sqlite")
@@ -57,9 +75,17 @@ def main():
             "camera_face_comparison.face_engine.detect_execution_backend",
             return_value=ExecutionBackend("cpu", ("CPUExecutionProvider",), -1),
         ):
-            engine = FaceEngine.from_local_model(settings)
+            engine = (
+                _load_reference_engine(settings)
+                if args.reference_loader
+                else FaceEngine.from_local_model(settings)
+            )
     else:
-        engine = FaceEngine.from_local_model(settings)
+        engine = (
+            _load_reference_engine(settings)
+            if args.reference_loader
+            else FaceEngine.from_local_model(settings)
+        )
     report = {
         "model_load_ms": (perf_counter() - started) * 1000,
         "backend": backend_metadata(engine.backend),
