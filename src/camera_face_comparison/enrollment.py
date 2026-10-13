@@ -93,10 +93,12 @@ class EnrollmentService:
                 display_name=normalized_name,
                 samples=samples,
             )
-        except Exception:
-            # 数据库写入失败时 final_dir 可能已经存在，因此临时目录和最终目录都要回收。
-            rmtree(staging_dir, ignore_errors=True)
-            rmtree(final_dir, ignore_errors=True)
+        except Exception as error:
+            _cleanup_operation(staging_dir, error)
+            if not self.repository.transaction_uncertain:
+                _cleanup_operation(final_dir, error)
+            else:
+                error.add_note("数据库结果不明，已保留本次正式图片供复查")
             raise
         finally:
             _remove_empty_directory(staging_dir.parent)
@@ -154,14 +156,33 @@ class EnrollmentService:
                 samples=samples,
             )
             return len(samples)
-        except Exception:
-            rmtree(staging_dir, ignore_errors=True)
+        except Exception as error:
+            _cleanup_operation(staging_dir, error)
             # 只删除本次操作生成的文件，绝不清空人员目录中的既有样本。
-            for moved_path in moved_paths:
-                moved_path.unlink(missing_ok=True)
+            if not self.repository.transaction_uncertain:
+                for moved_path in moved_paths:
+                    try:
+                        moved_path.unlink(missing_ok=True)
+                    except OSError as cleanup_error:
+                        error.add_note(f"本次图片未能清理：{moved_path}；{cleanup_error}")
+            else:
+                error.add_note("数据库结果不明，已保留本次正式图片供复查")
             raise
         finally:
             _remove_empty_directory(staging_dir.parent)
+
+
+def _cleanup_operation(path: Path, error: Exception) -> None:
+    """清理本次目录并把清理错误附加到原始异常，不覆盖故障原因。"""
+    if not path.exists():
+        return
+    failures: list[str] = []
+    def on_error(function, filename, exception):
+        """记录单项清理失败，使其他文件仍有机会被清理。"""
+        failures.append(f"{filename}：{exception[1]}")
+    rmtree(path, onerror=on_error)
+    for failure in failures:
+        error.add_note(f"本次目录未完全清理：{failure}")
 
 
 def _sha256_file(path: Path) -> str:

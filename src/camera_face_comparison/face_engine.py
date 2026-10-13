@@ -215,7 +215,8 @@ def normalize_embedding(embedding: np.ndarray) -> np.ndarray:
 
     vector = np.asarray(embedding, dtype=np.float32)
     norm = float(np.linalg.norm(vector))
-    if vector.ndim != 1 or vector.size == 0 or norm == 0.0:
+    if (vector.ndim != 1 or vector.size == 0 or not np.isfinite(vector).all()
+            or not np.isfinite(norm) or norm == 0.0):
         raise FaceInputError("invalid_embedding")
     # 单位向量使后续点积等价于余弦相似度，也统一多样本均值的尺度。
     return vector / norm

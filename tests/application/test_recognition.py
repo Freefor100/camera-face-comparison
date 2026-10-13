@@ -6,6 +6,8 @@ import hashlib
 
 import numpy as np
 
+from tests.application.helpers import embedding as production_embedding
+
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.face_engine import FaceInputError, FaceObservation
 from camera_face_comparison.face_library import InMemoryFaceLibrary
@@ -38,9 +40,9 @@ def test_mean_prototype_uses_all_reference_embeddings_before_scoring(tmp_path) -
         person_id="alice",
         display_name="Alice",
         samples=[
-            _sample_input(np.array([1.0, 0.0], dtype=np.float32), image_path="faces/alice/1.jpg"),
+            _sample_input(production_embedding([1.0, 0.0]), image_path="faces/alice/1.jpg"),
             _sample_input(
-                np.array([0.10, 0.995], dtype=np.float32), image_path="faces/alice/2.jpg"
+                production_embedding([0.10, 0.995]), image_path="faces/alice/2.jpg"
             ),
         ],
     )
@@ -48,12 +50,12 @@ def test_mean_prototype_uses_all_reference_embeddings_before_scoring(tmp_path) -
         person_id="bob",
         display_name="Bob",
         samples=[
-            _sample_input(np.array([0.91, 0.414], dtype=np.float32), image_path="faces/bob/1.jpg"),
-            _sample_input(np.array([0.90, 0.436], dtype=np.float32), image_path="faces/bob/2.jpg"),
+            _sample_input(production_embedding([0.91, 0.414]), image_path="faces/bob/1.jpg"),
+            _sample_input(production_embedding([0.90, 0.436]), image_path="faces/bob/2.jpg"),
         ],
     )
     decision = InMemoryFaceLibrary.from_repository(repository).snapshot().search(
-        np.array([1.0, 0.0], dtype=np.float32), ScoreThresholdPolicy(minimum_score=0.80)
+        production_embedding([1.0, 0.0]), ScoreThresholdPolicy(minimum_score=0.80)
     )
     repository.close()
 
@@ -69,15 +71,15 @@ def test_frozen_score_rule_does_not_reject_a_close_second_candidate(tmp_path) ->
     repository.create_person_with_samples(
         person_id="alice",
         display_name="Alice",
-        samples=[_sample_input(np.array([0.90, 0.43589], dtype=np.float32), image_path="faces/alice/1.jpg")],
+        samples=[_sample_input(production_embedding([0.90, 0.43589]), image_path="faces/alice/1.jpg")],
     )
     repository.create_person_with_samples(
         person_id="bob",
         display_name="Bob",
-        samples=[_sample_input(np.array([0.89, 0.45596], dtype=np.float32), image_path="faces/bob/1.jpg")],
+        samples=[_sample_input(production_embedding([0.89, 0.45596]), image_path="faces/bob/1.jpg")],
     )
     decision = InMemoryFaceLibrary.from_repository(repository).snapshot().search(
-        np.array([1.0, 0.0], dtype=np.float32), ScoreThresholdPolicy(minimum_score=0.80)
+        production_embedding([1.0, 0.0]), ScoreThresholdPolicy(minimum_score=0.80)
     )
     repository.close()
 
@@ -95,13 +97,13 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
         repository,
         settings,
         "Alice",
-        [np.array([1.0, 0.0], dtype=np.float32)],
+        [production_embedding([1.0, 0.0])],
     )
     _create_person(
         repository,
         settings,
         "Bob",
-        [np.array([0.2, 0.98], dtype=np.float32)],
+        [production_embedding([0.2, 0.98])],
     )
     library = InMemoryFaceLibrary.from_repository(repository)
 
@@ -128,7 +130,7 @@ def test_recognition_service_returns_calibrated_fields_and_quality_warnings(tmp_
             return FaceObservation(
                 bbox=detected.bbox,
                 detection_score=detected.detection_score,
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                embedding=production_embedding([1.0, 0.0]),
                 blur_variance=detected.blur_variance,
                 landmarks=detected.landmarks,
             )
@@ -171,7 +173,7 @@ def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, mon
         repository,
         settings,
         "Alice",
-        [np.array([1.0, 0.0], dtype=np.float32)],
+        [production_embedding([1.0, 0.0])],
     )
     library = InMemoryFaceLibrary.from_repository(repository)
 
@@ -206,7 +208,7 @@ def test_recognition_service_uses_snapshot_without_reading_samples(tmp_path, mon
             return FaceObservation(
                 bbox=detected.bbox,
                 detection_score=detected.detection_score,
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                embedding=production_embedding([1.0, 0.0]),
                 blur_variance=detected.blur_variance,
                 landmarks=detected.landmarks,
             )
@@ -232,7 +234,7 @@ def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_fram
         repository,
         settings,
         "Alice",
-        [np.array([1.0, 0.0], dtype=np.float32)],
+        [production_embedding([1.0, 0.0])],
     )
     library = InMemoryFaceLibrary.from_repository(repository)
 
@@ -261,7 +263,7 @@ def test_recognition_service_selects_sharpest_valid_frame_and_skips_invalid_fram
             return FaceObservation(
                 bbox=detected.bbox,
                 detection_score=detected.detection_score,
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                embedding=production_embedding([1.0, 0.0]),
                 blur_variance=detected.blur_variance,
                 landmarks=detected.landmarks,
             )
@@ -295,7 +297,7 @@ def test_multiframe_recognition_detects_every_frame_but_extracts_one_embedding(t
         repository,
         settings,
         "Alice",
-        [np.array([1.0, 0.0], dtype=np.float32)],
+        [production_embedding([1.0, 0.0])],
     )
     library = InMemoryFaceLibrary.from_repository(repository)
 
@@ -332,7 +334,7 @@ def test_multiframe_recognition_detects_every_frame_but_extracts_one_embedding(t
             return FaceObservation(
                 bbox=detected.bbox,
                 detection_score=detected.detection_score,
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                embedding=production_embedding([1.0, 0.0]),
                 blur_variance=detected.blur_variance,
                 landmarks=detected.landmarks,
             )

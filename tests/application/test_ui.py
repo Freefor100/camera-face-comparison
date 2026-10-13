@@ -13,6 +13,8 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 
+from tests.application.helpers import embedding as production_embedding
+
 from camera_face_comparison.camera import CameraDevice
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.domain import FaceSample, Person, RecognitionResult
@@ -74,7 +76,7 @@ def test_main_window_shows_library_and_updates_camera_controls(tmp_path, qapplic
         samples=[
             SampleInput(
                     image_path="faces/alice/sample.jpg",
-                    embedding=np.array([1.0, 0.0], dtype=np.float32),
+                    embedding=production_embedding([1.0, 0.0]),
                     quality_metrics={"face_size_px": 160.0},
                     image_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
                 )
@@ -232,7 +234,7 @@ def test_library_sample_cards_reflow_and_hide_internal_source(tmp_path, qapplica
             id=f"sample-{index}",
             person_id=person.id,
             image_path=f"missing-{index}.jpg",
-            embedding=np.array([1.0, 0.0], dtype=np.float32),
+            embedding=production_embedding([1.0, 0.0]),
             quality_metrics={},
             created_at=datetime.now(UTC),
             source_type="file",
@@ -277,7 +279,7 @@ def test_library_page_exposes_person_and_sample_management_actions(
         id="sample-1",
         person_id=person.id,
         image_path="missing.jpg",
-        embedding=np.array([1.0, 0.0], dtype=np.float32),
+        embedding=production_embedding([1.0, 0.0]),
         quality_metrics={},
         created_at=datetime.now(UTC),
         source_type="file",
@@ -319,13 +321,13 @@ def test_main_window_management_keeps_database_files_and_memory_in_sync(
         samples=[
             SampleInput(
                 image_path="faces/alice/first.jpg",
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                embedding=production_embedding([1.0, 0.0]),
                 quality_metrics={},
                 image_sha256=hashlib.sha256(first_path.read_bytes()).hexdigest(),
             ),
             SampleInput(
                 image_path="faces/alice/second.jpg",
-                embedding=np.array([0.0, 1.0], dtype=np.float32),
+                embedding=production_embedding([0.0, 1.0]),
                 quality_metrics={},
                 image_sha256=hashlib.sha256(second_path.read_bytes()).hexdigest(),
             ),
@@ -360,7 +362,7 @@ def test_main_window_management_keeps_database_files_and_memory_in_sync(
     assert not first_path.exists()
     assert second_path.exists()
     assert len(window._repository.list_samples("alice")) == 1
-    assert np.allclose(window._face_library.snapshot().prototype_matrix[0], [0.0, 1.0])
+    assert np.allclose(window._face_library.snapshot().prototype_matrix[0], production_embedding([0.0, 1.0]))
 
     window.delete_selected_person()
 
@@ -385,7 +387,7 @@ def test_switching_people_detaches_previous_sample_cards(tmp_path, qapplication)
                 id=f"{person.id}-sample",
                 person_id=person.id,
                 image_path="missing.jpg",
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                embedding=production_embedding([1.0, 0.0]),
                 quality_metrics={},
                 created_at=created_at,
             ),
@@ -418,7 +420,7 @@ def test_integrity_failure_disables_library_actions_until_manual_recheck_succeed
         samples=[
             SampleInput(
                 image_path="faces/alice/sample.jpg",
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                embedding=production_embedding([1.0, 0.0]),
                 quality_metrics={},
                 image_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
             )

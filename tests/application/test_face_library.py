@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from tests.application.helpers import embedding as production_embedding
+
 from camera_face_comparison.face_library import InMemoryFaceLibrary
 from camera_face_comparison.open_set_policy import ScoreThresholdPolicy
 from camera_face_comparison.repository import FaceRepository, SampleInput
@@ -14,7 +16,7 @@ def _sample(embedding: list[float], path: str) -> SampleInput:
 
     return SampleInput(
         image_path=path,
-        embedding=np.asarray(embedding, dtype=np.float32),
+        embedding=production_embedding(embedding),
         quality_metrics={},
         source_type="file",
     )
@@ -26,7 +28,7 @@ def test_empty_and_single_person_library_search(tmp_path) -> None:
     repository = FaceRepository(tmp_path / "face_library.sqlite")
     library = InMemoryFaceLibrary.from_repository(repository)
     empty = library.snapshot().search(
-        np.array([1.0, 0.0], dtype=np.float32),
+        production_embedding([1.0, 0.0]),
         ScoreThresholdPolicy(minimum_score=0.5),
     )
     assert empty.reason == "empty_face_library"
@@ -39,7 +41,7 @@ def test_empty_and_single_person_library_search(tmp_path) -> None:
     )
     library.rebuild(repository)
     decision = library.snapshot().search(
-        np.array([1.0, 0.0], dtype=np.float32),
+        production_embedding([1.0, 0.0]),
         ScoreThresholdPolicy(minimum_score=0.5),
     )
     repository.close()
@@ -64,7 +66,7 @@ def test_matrix_search_returns_top_two_with_deterministic_ties(tmp_path) -> None
     library = InMemoryFaceLibrary.from_repository(repository)
     snapshot = library.snapshot()
     decision = snapshot.search(
-        np.array([1.0, 0.0], dtype=np.float32),
+        production_embedding([1.0, 0.0]),
         ScoreThresholdPolicy(minimum_score=0.9),
     )
     repository.close()
@@ -102,6 +104,6 @@ def test_refresh_person_replaces_one_row_and_old_snapshot_is_unchanged(tmp_path)
     repository.close()
 
     assert old_snapshot.revision < new_snapshot.revision
-    assert np.allclose(old_snapshot.prototype_matrix[0], [1.0, 0.0])
-    assert np.allclose(new_snapshot.prototype_matrix[0], [1.0 / np.sqrt(2), 1.0 / np.sqrt(2)])
+    assert np.allclose(old_snapshot.prototype_matrix[0], production_embedding([1.0, 0.0]))
+    assert np.allclose(new_snapshot.prototype_matrix[0], production_embedding([1.0 / np.sqrt(2), 1.0 / np.sqrt(2)]))
     assert np.allclose(old_snapshot.prototype_matrix[1], new_snapshot.prototype_matrix[1])

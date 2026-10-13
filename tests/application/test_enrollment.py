@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import pytest
 
+from tests.application.helpers import embedding as production_embedding
+
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.enrollment import EnrollmentService
 from camera_face_comparison.face_engine import FaceObservation
@@ -23,7 +25,7 @@ class FakeFaceEngine:
         return FaceObservation(
             bbox=(0.0, 0.0, 180.0, 180.0),
             detection_score=0.95,
-            embedding=np.array([0.2, 0.3, 0.4], dtype=np.float32),
+            embedding=production_embedding([0.2, 0.3, 0.4]),
             blur_variance=150.0,
             landmarks=None,
         )
@@ -38,7 +40,7 @@ class DiverseFakeFaceEngine:
         return FaceObservation(
             bbox=(0.0, 0.0, 180.0, 180.0),
             detection_score=0.95,
-            embedding=np.array([marker + 1.0, 3.0, 7.0], dtype=np.float32),
+            embedding=production_embedding([marker + 1.0, 3.0, 7.0]),
             blur_variance=150.0,
             landmarks=None,
         )

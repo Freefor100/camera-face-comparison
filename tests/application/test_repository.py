@@ -7,6 +7,8 @@ import hashlib
 import numpy as np
 import pytest
 
+from tests.application.helpers import embedding as production_embedding
+
 from camera_face_comparison.repository import FaceRepository, SampleInput
 
 
@@ -54,7 +56,7 @@ def test_repository_persists_person_and_embedding_across_reopen(tmp_path) -> Non
         display_name="Alice",
         samples=[
             _sample_input(
-                np.array([0.1, 0.2, 0.3], dtype=np.float32),
+                production_embedding([0.1, 0.2, 0.3]),
                 image_path="faces/alice/front.jpg",
             )
         ],
@@ -70,7 +72,7 @@ def test_repository_persists_person_and_embedding_across_reopen(tmp_path) -> Non
     assert len(samples) == 1
     assert samples[0].person_id == person.id
     assert samples[0].quality_metrics["face_size_px"] == 160.0
-    assert np.allclose(samples[0].embedding, [0.1, 0.2, 0.3])
+    assert np.allclose(samples[0].embedding, production_embedding([0.1, 0.2, 0.3]))
 
 
 def test_repository_persists_sample_provenance_hashes_and_wal_mode(tmp_path) -> None:
@@ -78,7 +80,7 @@ def test_repository_persists_sample_provenance_hashes_and_wal_mode(tmp_path) -> 
 
     database_path = tmp_path / "face_library.sqlite"
     repository = FaceRepository(database_path)
-    embedding = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    embedding = production_embedding([0.1, 0.2, 0.3])
     person = repository.create_person_with_samples(
         person_id="alice-id",
         display_name="Alice",
@@ -106,7 +108,7 @@ def test_repository_rejects_the_same_image_for_one_person(tmp_path) -> None:
     repository.create_person_with_samples(
         person_id="alice-id",
         display_name="Alice",
-        samples=[_sample_input(np.array([1.0, 0.0], dtype=np.float32))],
+        samples=[_sample_input(production_embedding([1.0, 0.0]))],
     )
 
     with pytest.raises(ValueError, match="该人员已经包含内容相同的图片"):
@@ -114,7 +116,7 @@ def test_repository_rejects_the_same_image_for_one_person(tmp_path) -> None:
             person_id="alice-id",
             samples=[
                 _sample_input(
-                    np.array([0.8, 0.2], dtype=np.float32),
+                    production_embedding([0.8, 0.2]),
                     image_path="faces/alice/repeated.jpg",
                 )
             ],
@@ -131,7 +133,7 @@ def test_repository_renames_existing_person_without_changing_identity(tmp_path) 
     repository.create_person_with_samples(
         person_id="alice-id",
         display_name="Alice",
-        samples=[_sample_input(np.array([1.0, 0.0], dtype=np.float32))],
+        samples=[_sample_input(production_embedding([1.0, 0.0]))],
     )
 
     renamed = repository.rename_person("alice-id", "  Alice Zhang  ")
@@ -154,12 +156,12 @@ def test_repository_deletes_one_sample_but_refuses_to_delete_the_last_sample(
         display_name="Alice",
         samples=[
             _sample_input(
-                np.array([1.0, 0.0], dtype=np.float32),
+                production_embedding([1.0, 0.0]),
                 image_path="faces/alice/first.jpg",
             ),
             SampleInput(
                 image_path="faces/alice/second.jpg",
-                embedding=np.array([0.8, 0.2], dtype=np.float32),
+                embedding=production_embedding([0.8, 0.2]),
                 quality_metrics={"face_size_px": 150.0},
                 source_type="file",
                 image_sha256="b" * 64,
@@ -187,7 +189,7 @@ def test_repository_deletes_person_samples_and_detaches_recognition_history(
     repository.create_person_with_samples(
         person_id="alice-id",
         display_name="Alice",
-        samples=[_sample_input(np.array([1.0, 0.0], dtype=np.float32))],
+        samples=[_sample_input(production_embedding([1.0, 0.0]))],
     )
     repository.record_recognition(
         decision="matched",

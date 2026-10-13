@@ -40,6 +40,8 @@ class FaceRepository:
             父目录已存在或由 SQLite 创建；本项目不迁移旧数据库结构。
         """
         self._connection = sqlite3.connect(database_path, timeout=5.0)
+        self.transaction_uncertain = False
+        self._faces_root = database_path.resolve().parent / "faces"
         self._connection.row_factory = sqlite3.Row
         # 外键保护逻辑关系，WAL 允许界面读取与工作线程写日志并行，busy_timeout 吸收短暂写竞争。
         self._connection.execute("PRAGMA foreign_keys = ON")
@@ -430,8 +432,9 @@ class FaceRepository:
     ) -> FaceSample:
         """校验向量并构造带哈希的样本领域对象。"""
         vector = np.asarray(embedding, dtype=np.float32)
-        if vector.ndim != 1 or vector.size == 0:
-            raise ValueError("embedding must be a non-empty one-dimensional vector")
+        if (vector.ndim != 1 or vector.size != 512 or not np.isfinite(vector).all()
+                or not np.isfinite(np.linalg.norm(vector)) or np.linalg.norm(vector) == 0):
+            raise ValueError("人脸特征必须是有限、非零的 512 维向量")
         # 哈希基于最终入库的 float32 字节，完整性检查可直接复算而不受输入 dtype 影响。
         return FaceSample(
             id=str(uuid4()),
@@ -447,6 +450,14 @@ class FaceRepository:
 
     def _insert_sample(self, sample: FaceSample) -> None:
         """将一个样本对象写入已存在的 SQLite 事务。"""
+        path = (self._faces_root.parent / sample.image_path).resolve()
+        if not path.is_relative_to(self._faces_root) or path == self._faces_root:
+            raise ValueError("样本图片必须位于受管图片目录内")
+        normalized_path = path.relative_to(self._faces_root.parent).as_posix()
+        if self._connection.execute(
+            "SELECT 1 FROM face_samples WHERE image_path = ?", (normalized_path,)
+        ).fetchone():
+            raise ValueError("样本图片路径已经被引用")
         # 只在同一人员内部排除内容完全相同的图片。同一张图片属于不同人员时不在此层推断业务错误，
         # 相似但字节不同的照片也必须保留，因为它们可能包含有价值的角度和光照变化。
         if sample.image_sha256 is not None:
@@ -471,7 +482,7 @@ class FaceRepository:
             (
                 sample.id,
                 sample.person_id,
-                sample.image_path,
+                normalized_path,
                 sample.embedding.tobytes(),
                 sample.embedding.size,
                 json.dumps(sample.quality_metrics, ensure_ascii=False),
@@ -520,11 +531,19 @@ class FaceRepository:
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             yield
-        except Exception:
-            self._connection.rollback()
-            raise
-        else:
             self._connection.commit()
+        except Exception as error:
+            try:
+                self._connection.rollback()
+            except sqlite3.Error as rollback_error:
+                # 结果不明时隔离连接，并通知图片补偿保留现场，不能把潜在已提交图片删掉。
+                self.transaction_uncertain = True
+                error.add_note(f"回滚失败，已隔离连接：{rollback_error}")
+                try:
+                    self._connection.close()
+                except sqlite3.Error as close_error:
+                    error.add_note(f"隔离连接时也发生异常：{close_error}")
+            raise
 
 
 def _now() -> datetime:

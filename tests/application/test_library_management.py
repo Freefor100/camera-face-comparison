@@ -7,6 +7,8 @@ import hashlib
 import numpy as np
 import pytest
 
+from tests.application.helpers import embedding as production_embedding
+
 from camera_face_comparison.config import load_settings
 from camera_face_comparison.library_management import LibraryManagementService
 from camera_face_comparison.repository import FaceRepository, SampleInput
@@ -32,7 +34,7 @@ def _add_person_with_files(
         inputs.append(
             SampleInput(
                 image_path=f"faces/{person_id}/{filename}",
-                embedding=np.array([1.0, float(index)], dtype=np.float32),
+                embedding=production_embedding([1.0, float(index)]),
                 quality_metrics={},
                 source_type="file",
                 image_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -95,8 +97,8 @@ def test_management_service_rejects_sample_path_outside_faces_directory(tmp_path
         display_name="Alice",
         samples=[
             SampleInput(
-                image_path=str(outside_path),
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                image_path="faces/alice/imported.jpg",
+                embedding=production_embedding([1.0, 0.0]),
                 quality_metrics={},
                 source_type="file",
                 image_sha256=hashlib.sha256(outside_path.read_bytes()).hexdigest(),
@@ -105,6 +107,10 @@ def test_management_service_rejects_sample_path_outside_faces_directory(tmp_path
     )
     service = LibraryManagementService(repository, settings)
 
+    repository._connection.execute(
+        "UPDATE face_samples SET image_path = ?", (str(outside_path),)
+    )
+    repository._connection.commit()
     with pytest.raises(ValueError, match="受管图片目录"):
         service.delete_person("alice-id")
 
