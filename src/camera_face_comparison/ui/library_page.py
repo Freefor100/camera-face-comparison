@@ -47,6 +47,10 @@ class SampleThumbnail(QLabel):
         """返回适合多数肖像图片的初始显示尺寸。"""
         return QSize(SAMPLE_CARD_TARGET_WIDTH - 12, 126)
 
+    def minimumSizeHint(self) -> QSize:
+        """布局最小边界不随已缩放图片改变，避免缓存命中后卡片高度跳变。"""
+        return QSize(112, 88)
+
     def set_source_image(self, image) -> None:
         """只接收已缩小的图像，并在主线程创建显示资源。"""
         self._source_pixmap = QPixmap.fromImage(image)
@@ -93,6 +97,7 @@ class LibraryPage(QWidget):
         self._sample_cards: list[QWidget] = []
         self._sample_delete_buttons: list[QPushButton] = []
         self._management_enabled = False
+        self._camera_ready = False
         self.thumbnail_loader = ThumbnailLoader(self)
         self.thumbnail_loader.ready.connect(self._thumbnail_ready)
         self._selection_generation = 0
@@ -326,10 +331,11 @@ class LibraryPage(QWidget):
         card_layout.addWidget(delete_button)
         return card
 
-    def set_management_enabled(self, enabled: bool) -> None:
+    def set_management_enabled(self, enabled: bool, *, camera_ready: bool) -> None:
         """按标准库完整性和任务状态启用或禁用修改、删除操作。"""
 
         self._management_enabled = enabled
+        self._camera_ready = camera_ready
         self._update_management_actions()
 
     def _thumbnail_ready(self, generation, sample_id, image):
@@ -342,6 +348,11 @@ class LibraryPage(QWidget):
 
         has_selection = self._selected_person_id() is not None
         enabled = self._management_enabled and has_selection
+        camera_ready = self._management_enabled and self._camera_ready
+        self.add_person_from_files_button.setEnabled(self._management_enabled)
+        self.add_person_button.setEnabled(camera_ready)
+        self.append_local_button.setEnabled(enabled)
+        self.append_sample_button.setEnabled(enabled and camera_ready)
         self.rename_person_button.setEnabled(enabled)
         self.delete_person_button.setEnabled(enabled)
         for button in self._sample_delete_buttons:

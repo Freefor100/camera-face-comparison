@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from camera_face_comparison.domain import Person, SampleMetadata
@@ -36,7 +37,7 @@ def test_library_page_exposes_person_and_sample_management_actions(
     page.delete_sample_requested.connect(requested_samples.append)
 
     page.set_people([person], {person.id: (sample,)})
-    page.set_management_enabled(True)
+    page.set_management_enabled(True, camera_ready=False)
 
     assert page.rename_person_button.text() == "修改姓名"
     assert page.delete_person_button.text() == "删除人员"
@@ -103,3 +104,19 @@ def test_library_sample_cards_reflow_with_available_width(tmp_path, qapplication
     page._relayout_sample_cards(720)
     assert max(page.sample_grid.getItemPosition(i)[1] for i in range(5)) >= 2
     page.close()
+
+
+def test_thumbnail_picture_does_not_change_layout_minimum(qapplication):
+    """缩放图片的尺寸提示不能随缓存回填而把卡片越撑越高。"""
+    from PySide6.QtGui import QPixmap
+
+    from camera_face_comparison.ui.library_page import SampleThumbnail
+
+    label = SampleThumbnail(QPixmap())
+    label.resize(186, 126)
+    before = label.minimumSizeHint()
+    label.set_source_image(QImage(180, 240, QImage.Format_RGB32))
+    label.resize(640, 480)
+    label.set_source_image(QImage(180, 240, QImage.Format_RGB32))
+    assert label.minimumSizeHint() == before
+    label.close()

@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QPoint, QRect
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
 from camera_face_comparison.camera import CameraDevice
 from camera_face_comparison.config import load_settings
@@ -283,6 +284,196 @@ def test_recheck_clears_result_from_previous_library_snapshot(tmp_path, app):
         assert window.controller.catalog.people[0].display_name == "新姓名"
         assert window.result_label.property("state") == "idle"
         assert window.result_preview_label.pixmap().isNull()
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_duplicate_name_keeps_healthy_library_and_reports_business_conflict(tmp_path, app):
+    """正常重名输入不能误报库损坏或禁用已有库。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    image = ImageInput.from_camera(np.full((180, 180, 3), 120, dtype=np.uint8))
+    try:
+        for name in ("Alice", " alice "):
+            window.controller.library_operation("create", name=name, inputs=(image,))
+            wait_for(app, lambda: window.controller.idle)
+        assert window.controller.library_valid
+        assert window.import_compare_button.isEnabled()
+        assert "姓名" in window._library_page.status_label.text()
+        assert "存在" in window._library_page.status_label.text()
+        repository = FaceRepository(window.controller.settings.database_path)
+        assert len(repository.list_people()) == 1
+        assert len(repository.list_samples()) == 1
+        repository.close()
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_postcommit_cleanup_failure_invalidates_stale_library_snapshot(tmp_path, app):
+    """其他坏路径阻碍清理时，仍须承认删除已提交并撤销旧矩阵。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        for index, name in enumerate(("甲", "乙")):
+            window.controller.library_operation(
+                "create",
+                name=name,
+                inputs=(
+                    ImageInput.from_camera(
+                        np.full((180, 180, 3), 100 + index * 40, dtype=np.uint8)
+                    ),
+                ),
+            )
+            wait_for(app, lambda: window.controller.idle)
+        people = {p.display_name: p.id for p in window.controller.catalog.people}
+        repository = FaceRepository(window.controller.settings.database_path)
+        repository._connection.execute(
+            "UPDATE face_samples SET image_path=? WHERE person_id=?",
+            (b"bad-path", people["乙"]),
+        )
+        repository._connection.commit()
+        repository.close()
+        window.controller.library_operation("delete_person", person_id=people["甲"])
+        wait_for(app, lambda: window.controller.idle)
+        repository = FaceRepository(window.controller.settings.database_path)
+        assert [p.display_name for p in repository.list_people()] == ["乙"]
+        repository.close()
+        assert not window.controller.library_valid
+        assert window.controller.face_library.snapshot().person_ids == ()
+        assert "已保存" in window._library_page.status_label.text()
+        assert window.result_label.property("state") == "idle"
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_camera_enrollment_uses_picture_copied_before_name_dialog(tmp_path, app, monkeypatch):
+    """姓名对话框期间设备断开，不得把空画面传给录入流程。"""
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    window.start_camera()
+    wait_for(app, lambda: window.controller.current_frame is not None)
+
+    def stop_while_entering_name(*args, **kwargs):
+        """仅模拟姓名对话框期间发生的真实停止事件。"""
+        window.stop_camera()
+        return "摄像头采样", True
+
+    monkeypatch.setattr(QInputDialog, "getText", stop_while_entering_name)
+    try:
+        window.add_person_from_current_frame()
+        wait_for(app, lambda: window.controller.idle)
+        assert window.controller.library_valid
+        assert [p.display_name for p in window.controller.catalog.people] == ["摄像头采样"]
+        assert window.controller.catalog.metadata[0].source_type == "camera"
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_library_buttons_require_selection_and_available_camera_picture(tmp_path, app):
+    """不同管理操作各自检查所需条件，空操作不能伪装为可用。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        assert window.add_person_from_files_button.isEnabled()
+        assert not window.add_person_button.isEnabled()
+        assert not window.append_local_button.isEnabled()
+        assert not window.append_sample_button.isEnabled()
+        window.controller.library_operation(
+            "create",
+            name="甲",
+            inputs=(ImageInput.from_camera(np.full((180, 180, 3), 120, dtype=np.uint8)),),
+        )
+        wait_for(app, lambda: window.controller.idle)
+        assert window.append_local_button.isEnabled()
+        assert not window.append_sample_button.isEnabled()
+        window.start_camera()
+        wait_for(app, lambda: window.controller.current_frame is not None)
+        assert window.add_person_button.isEnabled()
+        assert window.append_sample_button.isEnabled()
+        window._library_page.search_edit.setText("没有这个人")
+        assert not window.append_local_button.isEnabled()
+        assert not window.append_sample_button.isEnabled()
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_window_fits_768_height_after_preview_and_resize(tmp_path, app):
+    """图片和布局不能把普通桌面窗口撑到屏幕高度之外。"""
+    window = window_at(tmp_path)
+    window.show()
+    wait_for(app, lambda: window.controller.idle)
+    try:
+        window.resize(1024, 768)
+        app.processEvents()
+        assert window.width() <= 1024 and window.height() <= 768
+        photo = tmp_path / "probe.jpg"
+        cv2.imwrite(str(photo), np.full((180, 180, 3), 120, dtype=np.uint8))
+        window.controller.recognize_file(photo)
+        wait_for(app, lambda: window.controller.idle)
+        page = window._recognition_page
+        viewport = page.result_scroll.viewport()
+        for label in (page.result_source_label, page.latency_label, page.quality_label):
+            bounds = QRect(label.mapTo(viewport, QPoint()), label.size())
+            assert viewport.rect().contains(bounds)
+        window.start_camera()
+        wait_for(app, lambda: window.controller.current_frame is not None)
+        window.resize(1600, 1000)
+        app.processEvents()
+        window.resize(1024, 768)
+        app.processEvents()
+        assert window.width() <= 1024 and window.height() <= 768
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_empty_library_explanation_does_not_claim_a_score_comparison(tmp_path, app):
+    """没有候选时不能把没有发生的分数比较写成低于阈值。"""
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    photo = tmp_path / "probe.jpg"
+    cv2.imwrite(str(photo), np.full((180, 180, 3), 120, dtype=np.uint8))
+    try:
+        window.controller.recognize_file(photo)
+        wait_for(app, lambda: window.controller.idle)
+        assert "标准库为空" in window._recognition_page.decision_label.text()
+        assert window._recognition_page.top_score_label.text() == "--"
+    finally:
+        window.close()
+        wait_for(app, lambda: window.controller.can_close)
+
+
+def test_successful_result_does_not_keep_previous_error_tooltip(tmp_path, app):
+    """失败后重新识别成功，姓名上不应残留上一轮错误详情。"""
+    from camera_face_comparison.image_input import ImageInput
+
+    window = window_at(tmp_path)
+    wait_for(app, lambda: window.controller.idle)
+    photo = tmp_path / "probe.jpg"
+    cv2.imwrite(str(photo), np.full((180, 180, 3), 120, dtype=np.uint8))
+    try:
+        window.controller.library_operation(
+            "create", name="甲", inputs=(ImageInput.from_file(photo),)
+        )
+        wait_for(app, lambda: window.controller.idle)
+        window.controller.recognize_file(tmp_path / "missing.jpg")
+        wait_for(app, lambda: window.controller.idle)
+        assert window._recognition_page.result_name_label.toolTip()
+        window.controller.recognize_file(photo)
+        wait_for(app, lambda: window.controller.idle)
+        assert window.result_label.property("state") == "matched"
+        assert not window._recognition_page.result_name_label.toolTip()
     finally:
         window.close()
         wait_for(app, lambda: window.controller.can_close)

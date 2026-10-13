@@ -24,6 +24,7 @@ class ApplicationState:
     """按钮状态的唯一依据，设备事件不能冒充业务任务状态。"""
 
     camera: str = "stopped"
+    camera_ready: bool = False
     library: str = "unchecked"
     task: str = "idle"
     closing: bool = False
@@ -324,6 +325,8 @@ class TaskController(QObject):
         """停止后丢弃迟到画面，避免最后一帧重新填回预览。"""
         if self.camera_worker is worker and self.state.camera == "running":
             self.current_frame = frame.copy()
+            if not self.state.camera_ready:
+                self._set_state(camera_ready=True)
             self.frame_ready.emit(self.current_frame)
 
     def _camera_error(self, worker, error):
@@ -343,16 +346,16 @@ class TaskController(QObject):
             self.worker.cancel()
             self.recognition_cancelled.emit("识别已取消，正在等待任务安全退出。")
         if self.camera_worker is None:
-            self._set_state(camera="stopped")
+            self._set_state(camera="stopped", camera_ready=False)
         else:
-            self._set_state(camera="stopping")
+            self._set_state(camera="stopping", camera_ready=False)
             self.camera_worker.stop()
 
     def _camera_finished(self, worker):
         """真正退出后才能重新打开，不在主线程阻塞等待。"""
         if self.camera_worker is worker:
             self.camera_worker = None
-            self._set_state(camera="stopped")
+            self._set_state(camera="stopped", camera_ready=False)
             if not self._device_failed and not self.state.closing:
                 self.device_status.emit("预览已停止。")
             worker.deleteLater()

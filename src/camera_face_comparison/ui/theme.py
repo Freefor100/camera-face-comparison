@@ -47,6 +47,7 @@ QComboBox, QLineEdit {
 }
 #controlCaption { color: #7f8eae; font-size: 11px; font-weight: 700; }
 #recognitionWorkbench, #libraryWorkbench { background: transparent; border: 0; }
+#resultScroll, #resultViewport { background: transparent; border: 0; }
 #previewCard, #peoplePanel, #personDetails {
     background: #11182a;
     border: 1px solid #263452;

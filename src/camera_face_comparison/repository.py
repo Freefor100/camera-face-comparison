@@ -15,7 +15,7 @@ from uuid import uuid4
 import numpy as np
 
 from .domain import FaceSample, Person, SampleMetadata
-from .errors import LibraryUnavailableError
+from .errors import BusinessConstraintError, LibraryUnavailableError
 
 
 @dataclass(frozen=True)
@@ -111,10 +111,18 @@ class FaceRepository:
             for sample in samples
         ]
         with self._write_transaction():
-            self._connection.execute(
-                "INSERT INTO persons (id, display_name, created_at) VALUES (?, ?, ?)",
-                (person.id, person.display_name, person.created_at.isoformat()),
-            )
+            try:
+                self._connection.execute(
+                    "INSERT INTO persons (id, display_name, created_at) VALUES (?, ?, ?)",
+                    (person.id, person.display_name, person.created_at.isoformat()),
+                )
+            except sqlite3.IntegrityError as error:
+                # 唯一姓名冲突是正常输入问题；其他存储错误仍沿原异常通道处理。
+                if error.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+                    raise BusinessConstraintError(
+                        "该姓名已经存在，请使用其他姓名或为已有人员追加样本。"
+                    ) from error
+                raise
             for sample in prepared_samples:
                 self._insert_sample(sample)
         return person
@@ -178,17 +186,21 @@ class FaceRepository:
             if row is None:
                 raise ValueError("人员不存在")
             try:
+                existing = self._person_from_row(row)
+            except (ValueError, TypeError) as error:
+                raise LibraryUnavailableError(
+                    "人员记录损坏，未修改姓名，请重新检查标准库。"
+                ) from error
+            # 提交前准备好返回对象，避免提交成功后才因旧记录解析失败而误报未保存。
+            updated = Person(existing.id, normalized_name, existing.created_at)
+            try:
                 self._connection.execute(
                     "UPDATE persons SET display_name = ? WHERE id = ?",
                     (normalized_name, person_id),
                 )
             except sqlite3.IntegrityError as error:
-                raise ValueError("该姓名已经存在") from error
-        return Person(
-            id=str(row["id"]),
-            display_name=normalized_name,
-            created_at=datetime.fromisoformat(row["created_at"]),
-        )
+                raise BusinessConstraintError("该姓名已经存在，请使用其他姓名。") from error
+        return updated
 
     def delete_sample(self, person_id: str, sample_id: str) -> SampleMetadata:
         """删除指定人员的一张样本，但禁止删除该人员的最后一张样本。

@@ -55,7 +55,8 @@ class LibraryManagementService:
                 path = self._managed_image_path(sample)
                 if not self._repository.image_is_referenced(path):
                     removable.append(path)
-            except (sqlite3.Error, OSError, ValueError):
+            except (sqlite3.Error, OSError, ValueError, TypeError):
+                # 剩余样本的坏字段可能使引用检查失败；留图并报告，不遮蔽已提交的删除。
                 failures.append(path)
         return tuple(failures) + self._cleanup_images(tuple(removable))
 

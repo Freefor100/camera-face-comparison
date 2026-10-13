@@ -112,16 +112,9 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(device_idle)
         self.start_button.setEnabled(device_idle and self.camera_combo.count() > 0)
         self.stop_button.setEnabled(state.camera in {"starting", "running"} and not state.closing)
-        self.compare_button.setEnabled(allowed and state.camera == "running")
+        self.compare_button.setEnabled(allowed and state.camera_ready)
         self.import_compare_button.setEnabled(allowed)
-        for button in (
-            self.add_person_from_files_button,
-            self.add_person_button,
-            self.append_local_button,
-            self.append_sample_button,
-        ):
-            button.setEnabled(allowed)
-        self._library_page.set_management_enabled(allowed)
+        self._library_page.set_management_enabled(allowed, camera_ready=state.camera_ready)
         self.recheck_library_button.setEnabled(idle)
         self._recognition_page.set_camera_running(state.camera == "running")
         labels = {
@@ -135,8 +128,9 @@ class MainWindow(QMainWindow):
             "数据：" + labels[state.library], warning=state.library != "healthy"
         )
         self.integrity_label.setToolTip(
-            "这是最近一次检查的结果，不是实时监控。" if state.library == "healthy" else
-            "请在标准人脸库页查看诊断原因并重新检查。"
+            "这是最近一次检查的结果，不是实时监控。"
+            if state.library == "healthy"
+            else "请在标准人脸库页查看诊断原因并重新检查。"
         )
         if self.controller.catalog is None:
             self._recognition_page.library_summary_label.setText("标准库：--")
@@ -229,6 +223,7 @@ class MainWindow(QMainWindow):
         page.set_result_state("idle")
         self.result_label.setText("等待识别")
         page.result_name_label.setText("选择摄像头抓拍或本地图片")
+        page.result_name_label.setToolTip("")
         page.result_source_label.setText("等待输入")
         page.quality_label.setText("画面建议：--")
         page.log_warning_label.clear()
@@ -254,7 +249,11 @@ class MainWindow(QMainWindow):
             self.status_label.setText("已在标准库中找到符合条件的人员。")
         elif result.status == "unknown":
             self.result_label.setText("未知人员")
-            page.result_name_label.setText("未达到登记人员接收条件")
+            page.result_name_label.setText(
+                "请先录入标准库人员"
+                if result.reason == "empty_face_library"
+                else "未达到登记人员接收条件"
+            )
             self.status_label.setText(_format_reason(result.reason))
         else:
             self.result_label.setText("无法识别")
@@ -333,29 +332,36 @@ class MainWindow(QMainWindow):
         if self.controller.current_frame is None:
             QMessageBox.information(self, "需要画面", "请先启动摄像头预览。")
             return
+        # 对话框会处理设备事件，因此先冻结点击时的画面，不能确认姓名后再读共享当前帧。
+        image_input = ImageInput.from_camera(self.controller.current_frame)
         name, accepted = QInputDialog.getText(self, "新增人员", "人员姓名：")
         if accepted:
-            self.controller.library_operation(
-                "create", name=name, inputs=(ImageInput.from_camera(self.controller.current_frame),)
-            )
+            self.controller.library_operation("create", name=name, inputs=(image_input,))
 
     def append_local_images_to_selected_person(self):
         """为选中人员追加本地图片，解码和写入均在后台。"""
         person = self._selected_person()
-        if person is not None:
-            paths = self._select_paths()
-            if paths:
-                self.controller.library_operation("append", person_id=person.id, paths=paths)
+        if person is None:
+            self._show_library_status("请先选择标准库中的人员。")
+            return
+        paths = self._select_paths()
+        if paths:
+            self.controller.library_operation("append", person_id=person.id, paths=paths)
 
     def append_sample_to_selected_person(self):
         """复制当前画面并追加到已选择人员。"""
         person = self._selected_person()
-        if person is not None and self.controller.current_frame is not None:
-            self.controller.library_operation(
-                "append",
-                person_id=person.id,
-                inputs=(ImageInput.from_camera(self.controller.current_frame),),
-            )
+        if person is None:
+            self._show_library_status("请先选择标准库中的人员。")
+            return
+        if self.controller.current_frame is None:
+            self._show_library_status("请先启动摄像头预览并等待画面。")
+            return
+        self.controller.library_operation(
+            "append",
+            person_id=person.id,
+            inputs=(ImageInput.from_camera(self.controller.current_frame),),
+        )
 
     def rename_selected_person(self):
         """确认新姓名后提交管理任务，保持人员编号不变。"""
@@ -457,6 +463,8 @@ def _format_score(value: float | None) -> str:
 def _format_decision(result: RecognitionResult) -> str:
     """根据接收规则和结果状态生成简短、完整的判定说明。"""
 
+    if result.reason == "empty_face_library":
+        return "标准库为空，未进行身份比较"
     if result.status not in {"matched", "unknown"}:
         return "输入无效"
     accepted = result.status == "matched"

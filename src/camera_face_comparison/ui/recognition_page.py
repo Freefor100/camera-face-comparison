@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -34,8 +36,8 @@ class RecognitionPage(QWidget):
     def _build(self) -> None:
         """创建页面标题、设备操作、实时预览和识别结果区域。"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 26, 30, 30)
-        layout.setSpacing(16)
+        layout.setContentsMargins(24, 20, 24, 22)
+        layout.setSpacing(12)
 
         header = QHBoxLayout()
         title_group = QVBoxLayout()
@@ -125,14 +127,15 @@ class RecognitionPage(QWidget):
         self.preview_label = QLabel("尚未启动摄像头")
         self.preview_label.setObjectName("previewSurface")
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setMinimumSize(500, 360)
+        self.preview_label.setMinimumSize(360, 240)
+        self.preview_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         live_layout.addWidget(self.preview_label, 1)
 
         result_card = QFrame()
         result_card.setObjectName("resultCard")
         result_layout = QVBoxLayout(result_card)
         result_layout.setContentsMargins(16, 14, 16, 16)
-        result_layout.setSpacing(8)
+        result_layout.setSpacing(6)
         result_header = QHBoxLayout()
         result_title = QLabel("本次判定")
         result_title.setObjectName("cardTitle")
@@ -145,7 +148,8 @@ class RecognitionPage(QWidget):
         self.result_preview_label = QLabel("等待抓拍画面")
         self.result_preview_label.setObjectName("resultPreviewSurface")
         self.result_preview_label.setAlignment(Qt.AlignCenter)
-        self.result_preview_label.setMinimumSize(320, 220)
+        self.result_preview_label.setMinimumSize(240, 140)
+        self.result_preview_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         result_layout.addWidget(self.result_preview_label, 1)
         self.result_label = QLabel("等待识别")
         self.result_label.setObjectName("resultTitle")
@@ -186,7 +190,14 @@ class RecognitionPage(QWidget):
         result_layout.addWidget(self.quality_label)
 
         splitter.addWidget(live_card)
-        splitter.addWidget(result_card)
+        # 小窗口只滚动结果卡片，实时预览和顶部操作始终留在可见区域。
+        self.result_scroll = QScrollArea()
+        self.result_scroll.setObjectName("resultScroll")
+        self.result_scroll.viewport().setObjectName("resultViewport")
+        self.result_scroll.setWidgetResizable(True)
+        self.result_scroll.setMinimumWidth(300)
+        self.result_scroll.setWidget(result_card)
+        splitter.addWidget(self.result_scroll)
         splitter.setStretchFactor(0, 5)
         splitter.setStretchFactor(1, 4)
         return splitter

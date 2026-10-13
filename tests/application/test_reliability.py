@@ -257,3 +257,18 @@ def test_database_lock_is_busy_not_corruption(tmp_path):
     other._connection.rollback()
     other.close()
     repository.close()
+
+
+def test_rename_rejects_bad_person_record_before_committing_new_name(tmp_path):
+    """返回对象所需字段损坏时，不能已经改名才报告失败。"""
+    from camera_face_comparison.errors import LibraryUnavailableError
+
+    repository = FaceRepository(tmp_path / "library.sqlite")
+    repository.create_person_with_samples(person_id="a", display_name="甲", samples=[sample()])
+    repository._connection.execute("UPDATE persons SET created_at='bad-date' WHERE id='a'")
+    repository._connection.commit()
+    with pytest.raises(LibraryUnavailableError):
+        repository.rename_person("a", "新姓名")
+    assert repository._connection.execute("SELECT display_name FROM persons").fetchone()[0] == "甲"
+    assert not repository._connection.in_transaction
+    repository.close()

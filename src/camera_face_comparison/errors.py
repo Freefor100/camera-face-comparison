@@ -12,6 +12,10 @@ class LibraryUnavailableError(RuntimeError):
     """标准库缺失或结构错误，不能作为正常空库使用。"""
 
 
+class BusinessConstraintError(ValueError):
+    """表示可直接向操作者说明的业务冲突，不意味着存储损坏。"""
+
+
 @dataclass(frozen=True)
 class TaskFailure:
     """保留错误类别、用户说明与诊断详情，而非只发送异常字符串。"""
@@ -52,6 +56,8 @@ def classify_error(error: Exception, *, scope="system") -> TaskFailure:
         )
     if isinstance(error, LibraryUnavailableError):
         return TaskFailure("storage_unavailable", "标准库无法使用，请查看诊断并重新检查。", detail)
+    if isinstance(error, BusinessConstraintError):
+        return TaskFailure("business_constraint", str(error), detail)
     if scope == "device":
         return TaskFailure("device_error", "摄像头操作失败。", detail)
     if isinstance(error, ValueError):
