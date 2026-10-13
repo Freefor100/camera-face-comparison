@@ -41,14 +41,18 @@ class LibraryManagementService:
         不会让识别流程继续引用已经不存在的数据。
         """
 
-        samples = self._repository.list_samples(person_id)
+        samples = self._repository.list_sample_metadata(person_id)
         sample = next((item for item in samples if item.id == sample_id), None)
         if sample is None:
             raise ValueError("样本不存在或不属于所选人员")
         # 删除前先解析并验证路径；数据库提交后只清理已经不再被引用的文件。
         managed_path = self._managed_image_path(sample)
         removed = self._repository.delete_sample(person_id, sample_id)
-        failures = self._cleanup_images((managed_path,))
+        failures = self._cleanup_images(
+            tuple(
+                path for path in (managed_path,) if not self._repository.image_is_referenced(path)
+            )
+        )
         return LibraryDeletionResult(
             person_id=removed.person_id,
             removed_sample_count=1,
@@ -58,10 +62,12 @@ class LibraryManagementService:
     def delete_person(self, person_id: str) -> LibraryDeletionResult:
         """删除人员及其全部样本，并清理相应的受管图片文件。"""
 
-        samples = self._repository.list_samples(person_id)
+        samples = self._repository.list_sample_metadata(person_id)
         managed_paths = tuple(self._managed_image_path(sample) for sample in samples)
         removed = self._repository.delete_person(person_id)
-        failures = self._cleanup_images(managed_paths)
+        failures = self._cleanup_images(
+            tuple(path for path in managed_paths if not self._repository.image_is_referenced(path))
+        )
         return LibraryDeletionResult(
             person_id=person_id,
             removed_sample_count=len(removed),

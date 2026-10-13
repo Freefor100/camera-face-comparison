@@ -253,11 +253,10 @@ class RecognitionService:
             self._settings.recognition_policy,
         )
         self._record_timing("decision_ms", decision_started)
-        names = dict(zip(self._face_library.person_ids, self._face_library.display_names))
         return RecognitionResult(
             status="matched" if decision.accepted else "unknown",
             person_id=decision.accepted_person_id,
-            display_name=names.get(decision.accepted_person_id),
+            display_name=self._face_library.names_by_id.get(decision.accepted_person_id),
             top_score=decision.top_score,
             second_score=decision.second_score,
             score_gap=decision.score_gap,

@@ -1,6 +1,4 @@
-"""检查标准库数据库、样本文件和特征数据之间的一致性。"""
-
-from __future__ import annotations
+"""用一次数据库一致读取诊断标准库，并提供同源的矩阵和展示数据。"""
 
 import hashlib
 from dataclasses import dataclass
@@ -9,12 +7,14 @@ from pathlib import Path
 import numpy as np
 
 from .config import Settings
+from .domain import FaceSample, Person, SampleMetadata
+from .face_engine import normalize_embedding
 from .repository import FaceRepository
 
 
 @dataclass(frozen=True)
 class IntegrityFailure:
-    """一个不应继续用于识别的本地标准库异常项。"""
+    """一个阻止标准库参与识别的异常，保留具体样本和原因。"""
 
     kind: str
     detail: str
@@ -23,75 +23,91 @@ class IntegrityFailure:
 
 @dataclass(frozen=True)
 class LibraryVerificationReport:
-    """当前 SQLite 数据库和人脸文件的只读完整性检查结果。"""
+    """检查结果及来自同一数据库快照的人员、样本和展示元信息。"""
 
     failures: tuple[IntegrityFailure, ...]
+    warnings: tuple[str, ...] = ()
+    people: tuple[Person, ...] = ()
+    samples: tuple[FaceSample, ...] = ()
+    metadata: tuple[SampleMetadata, ...] = ()
 
     @property
     def is_valid(self) -> bool:
-        """返回是否不存在完整性失败项。"""
+        """返回能否安全构建所有人员原型，清理警告不阻断识别。"""
         return not self.failures
 
 
 def verify_library(repository: FaceRepository, settings: Settings) -> LibraryVerificationReport:
-    """检查 SQLite 结构以及录入时记录的图片、特征哈希。
-
-    参数：
-        repository：要检查的本地人脸库仓库。
-        settings：用于解析相对图片路径的数据目录配置。
-    返回：
-        所有发现的异常；没有异常时报告为有效。
-    前置条件：
-        仓库连接已打开，样本图片路径应位于配置的数据目录内。
-    """
-
-    failures: list[IntegrityFailure] = []
-    for message in repository.sqlite_integrity_messages():
-        if message.lower() != "ok":
-            failures.append(IntegrityFailure(kind="sqlite_integrity_error", detail=message))
-    for violation in repository.foreign_key_violations():
-        failures.append(IntegrityFailure(kind="foreign_key_violation", detail=violation))
-
-    face_root = settings.faces_dir.resolve()
-    for sample in repository.list_samples():
-        # resolve 后再检查父目录，既能识别绝对路径，也能阻止 .. 和符号链接逃逸标准库目录。
-        image_path = (settings.data_dir / sample.image_path).resolve()
-        if not _is_within(image_path, face_root):
-            failures.append(
-                IntegrityFailure("image_path_outside_library", str(image_path), sample.id)
-            )
-        elif not image_path.is_file():
-            failures.append(IntegrityFailure("image_missing", str(image_path), sample.id))
-        elif sample.image_sha256 is None:
-            failures.append(IntegrityFailure("missing_image_hash", str(image_path), sample.id))
-        elif _sha256_file(image_path) != sample.image_sha256:
-            failures.append(IntegrityFailure("image_hash_mismatch", str(image_path), sample.id))
-
-        expected_embedding_hash = sample.embedding_sha256
-        # 使用持久化时相同的 float32 字节序列计算哈希，避免数值格式转换造成误报。
-        current_embedding_hash = hashlib.sha256(
-            np.asarray(sample.embedding, dtype=np.float32).tobytes()
-        ).hexdigest()
-        if expected_embedding_hash is None:
-            failures.append(IntegrityFailure("missing_embedding_hash", sample.id, sample.id))
-        elif current_embedding_hash != expected_embedding_hash:
-            failures.append(IntegrityFailure("embedding_hash_mismatch", sample.id, sample.id))
-    return LibraryVerificationReport(tuple(failures))
-
-
-def _is_within(path: Path, root: Path) -> bool:
-    """判断解析后的路径是否仍位于指定根目录内。"""
+    """一次读取结构和记录，再逐条汇总向量、文件和身份不变量。"""
+    people_rows, sample_rows, checks, foreign_keys = repository.read_library_rows()
+    failures = [
+        IntegrityFailure("sqlite_integrity_error", value)
+        for value in checks
+        if value.lower() != "ok"
+    ]
+    failures.extend(IntegrityFailure("foreign_key_violation", value) for value in foreign_keys)
+    people, samples, metadata = [], [], []
+    for row in people_rows:
+        try:
+            people.append(repository._person_from_row(row))
+        except (ValueError, TypeError) as error:
+            failures.append(IntegrityFailure("invalid_person", f"{row['id']}：{error}"))
+    root = settings.faces_dir.resolve()
+    paths: set[Path] = set()
+    grouped = {}
+    for row in sample_rows:
+        sample_id = str(row["id"])
+        try:
+            metadata.append(repository._metadata_from_row(row))
+            sample = repository._sample_from_row(row)
+            samples.append(sample)
+            grouped.setdefault(sample.person_id, []).append(sample.embedding)
+            path = (settings.data_dir / sample.image_path).resolve()
+            if not path.is_relative_to(root) or path == root:
+                failures.append(
+                    IntegrityFailure("image_path_outside_library", str(path), sample_id)
+                )
+                continue
+            if path in paths:
+                failures.append(IntegrityFailure("shared_image_path", str(path), sample_id))
+            paths.add(path)
+            if not path.is_file():
+                failures.append(IntegrityFailure("image_missing", str(path), sample_id))
+            elif sample.image_sha256 is None:
+                failures.append(IntegrityFailure("missing_image_hash", str(path), sample_id))
+            elif _sha256_file(path) != sample.image_sha256:
+                failures.append(IntegrityFailure("image_hash_mismatch", str(path), sample_id))
+            digest = hashlib.sha256(sample.embedding.astype(np.float32).tobytes()).hexdigest()
+            if sample.embedding_sha256 != digest:
+                failures.append(IntegrityFailure("embedding_hash_mismatch", sample_id, sample_id))
+        except (ValueError, TypeError, AttributeError, OSError) as error:
+            failures.append(IntegrityFailure("invalid_sample", str(error), sample_id))
+    for person in people:
+        vectors = grouped.get(person.id, [])
+        if not vectors:
+            failures.append(IntegrityFailure("person_without_valid_samples", person.display_name))
+        else:
+            try:
+                normalize_embedding(np.mean([normalize_embedding(v) for v in vectors], axis=0))
+            except ValueError as error:
+                failures.append(IntegrityFailure("invalid_person_prototype", str(error)))
+    warnings = []
     try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
+        # 只扫描受管目录，遗留文件不自动清理，也不误报成识别数据损坏。
+        for path in root.rglob("*"):
+            if path.is_file() and path.resolve() not in paths:
+                warnings.append(f"未被数据库引用的文件：{path.relative_to(root)}")
+    except OSError as error:
+        warnings.append(f"遗留文件扫描未完成：{error}")
+    return LibraryVerificationReport(
+        tuple(failures), tuple(warnings), tuple(people), tuple(samples), tuple(metadata)
+    )
 
 
 def _sha256_file(path: Path) -> str:
-    """分块计算本地文件的 SHA-256 哈希。"""
+    """分块读取文件并计算哈希，不把整张图片加载进内存。"""
     digest = hashlib.sha256()
-    with path.open("rb") as image_file:
-        for chunk in iter(lambda: image_file.read(65536), b""):
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()

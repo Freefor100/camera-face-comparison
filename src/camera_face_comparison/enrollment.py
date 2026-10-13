@@ -177,9 +177,11 @@ def _cleanup_operation(path: Path, error: Exception) -> None:
     if not path.exists():
         return
     failures: list[str] = []
+
     def on_error(function, filename, exception):
         """记录单项清理失败，使其他文件仍有机会被清理。"""
         failures.append(f"{filename}：{exception[1]}")
+
     rmtree(path, onerror=on_error)
     for failure in failures:
         error.add_note(f"本次目录未完全清理：{failure}")

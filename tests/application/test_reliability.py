@@ -20,9 +20,11 @@ def test_commit_failure_rolls_back_and_allows_next_transaction(tmp_path):
     """提交失败不能留下待提交记录或阻断下一次写入。"""
     repository = FaceRepository(tmp_path / "library.sqlite")
     repository._connection.set_authorizer(
-        lambda action, value, *_: sqlite3.SQLITE_DENY
-        if action == sqlite3.SQLITE_TRANSACTION and value == "COMMIT"
-        else sqlite3.SQLITE_OK
+        lambda action, value, *_: (
+            sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_TRANSACTION and value == "COMMIT"
+            else sqlite3.SQLITE_OK
+        )
     )
     with pytest.raises(sqlite3.DatabaseError):
         repository.create_person_with_samples(
@@ -54,9 +56,7 @@ def test_invalid_production_embedding_is_never_persisted(tmp_path, vector):
 def test_shared_image_path_is_rejected_before_second_identity_is_committed(tmp_path):
     """不同人员不能引用同一个受管文件，防止删除互相破坏。"""
     repository = FaceRepository(tmp_path / "library.sqlite")
-    repository.create_person_with_samples(
-        person_id="person", display_name="甲", samples=[sample()]
-    )
+    repository.create_person_with_samples(person_id="person", display_name="甲", samples=[sample()])
     with pytest.raises(ValueError):
         repository.create_person_with_samples(
             person_id="other", display_name="乙", samples=[sample()]
@@ -75,16 +75,57 @@ def test_failed_rollback_isolates_connection_and_preserves_enrollment_images(tmp
     settings = load_settings(tmp_path)
     repository = FaceRepository(settings.database_path)
     repository._connection.set_authorizer(
-        lambda action, value, *_: sqlite3.SQLITE_DENY
-        if action == sqlite3.SQLITE_TRANSACTION and value in {"COMMIT", "ROLLBACK"}
-        else sqlite3.SQLITE_OK
+        lambda action, value, *_: (
+            sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_TRANSACTION and value in {"COMMIT", "ROLLBACK"}
+            else sqlite3.SQLITE_OK
+        )
     )
-    service = EnrollmentService(repository=repository, settings=settings,
-                                face_engine=FakeFaceEngine(), image_saver=_save_image)
+    service = EnrollmentService(
+        repository=repository,
+        settings=settings,
+        face_engine=FakeFaceEngine(),
+        image_saver=_save_image,
+    )
     with pytest.raises(sqlite3.DatabaseError):
-        service.create_from_inputs("事务异常", [ImageInput.from_camera(
-            np.zeros((200, 200, 3), dtype=np.uint8))])
+        service.create_from_inputs(
+            "事务异常", [ImageInput.from_camera(np.zeros((200, 200, 3), dtype=np.uint8))]
+        )
     assert repository.transaction_uncertain
     assert len(list(settings.faces_dir.glob("*/sample_001.jpg"))) == 1
     with pytest.raises(sqlite3.ProgrammingError):
         repository.list_people()
+
+
+def test_corrupt_sample_is_reported_and_deletion_does_not_decode_embedding(tmp_path):
+    """坏向量需要形成诊断报告，删除不能提交后才解码报错。"""
+    from camera_face_comparison.config import load_settings
+    from camera_face_comparison.integrity import verify_library
+
+    settings = load_settings(tmp_path)
+    repository = FaceRepository(settings.database_path)
+    repository.create_person_with_samples(
+        person_id="person",
+        display_name="测试",
+        samples=[sample(), sample("faces/person/second.jpg")],
+    )
+    bad = repository.list_samples()[0].id
+    repository._connection.execute("UPDATE face_samples SET embedding_dim=511 WHERE id=?", (bad,))
+    repository._connection.commit()
+    report = verify_library(repository, settings)
+    assert not report.is_valid
+    assert any(item.kind == "invalid_sample" for item in report.failures)
+    removed = repository.delete_sample("person", bad)
+    assert removed.id == bad
+    assert len(repository.list_samples()) == 1
+    repository.close()
+
+
+def test_missing_database_with_existing_photos_is_not_silently_recreated(tmp_path):
+    """数据库丢失但照片仍在时，必须报告缺失而不是建立空库。"""
+    photo = tmp_path / "faces/person/sample.jpg"
+    photo.parent.mkdir(parents=True)
+    photo.write_bytes(b"retained source")
+    with pytest.raises(RuntimeError):
+        FaceRepository(tmp_path / "library.sqlite")
+    assert not (tmp_path / "library.sqlite").exists()

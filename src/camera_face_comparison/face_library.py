@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from threading import RLock
+from types import MappingProxyType
 
 import numpy as np
 
+from .domain import FaceSample, Person
 from .face_engine import normalize_embedding
 from .open_set_policy import OpenSetDecision, ScoreThresholdPolicy, apply_ranked_open_set_policy
 from .repository import FaceRepository
@@ -20,6 +23,13 @@ class FaceLibrarySnapshot:
     display_names: tuple[str, ...]
     prototype_matrix: np.ndarray
     revision: int
+    names_by_id: Mapping[str, str] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """一次性建立只读姓名映射，避免每个查询重新遍历人员。"""
+        object.__setattr__(
+            self, "names_by_id", MappingProxyType(dict(zip(self.person_ids, self.display_names)))
+        )
 
     def search(
         self,
@@ -66,9 +76,7 @@ class FaceLibrarySnapshot:
         # 原型和查询均已 L2 归一化，矩阵点积即可一次得到所有身份的余弦相似度。
         scores = self.prototype_matrix @ query
         top_index = int(np.argmax(scores))
-        ranked: list[tuple[str, float]] = [
-            (self.person_ids[top_index], float(scores[top_index]))
-        ]
+        ranked: list[tuple[str, float]] = [(self.person_ids[top_index], float(scores[top_index]))]
         if len(self.person_ids) > 1:
             # 屏蔽第一名后再次取最大值，避免完整排序整个人员矩阵。
             second_scores = scores.copy()
@@ -95,77 +103,75 @@ class InMemoryFaceLibrary:
 
     @classmethod
     def from_repository(cls, repository: FaceRepository) -> InMemoryFaceLibrary:
-        """读取仓库中的全部样本并构建初始人员原型矩阵。"""
+        """用一次数据库一致读取构建原型矩阵，不执行逐人查询。"""
+        people_rows, sample_rows, _, _ = repository.read_library_rows()
+        return cls.from_samples(
+            [repository._person_from_row(row) for row in people_rows],
+            [repository._sample_from_row(row) for row in sample_rows],
+        )
 
-        person_rows = sorted(repository.list_people(), key=lambda person: person.id)
-        entries = []
-        for person in person_rows:
-            samples = repository.list_samples(person.id)
-            if not samples:
-                continue
-            # 每张样本先归一化再求均值，防止向量模长影响人员原型的权重。
-            normalized = [normalize_embedding(sample.embedding) for sample in samples]
-            prototype = normalize_embedding(np.mean(normalized, axis=0))
-            entries.append((person.id, person.display_name, prototype))
-        return cls(_snapshot_from_entries(entries, revision=0))
+    @classmethod
+    def from_samples(cls, people: Sequence[Person], samples: Sequence[FaceSample]):
+        """从已经检查的同源记录构建矩阵，不再读取数据库。"""
+        return cls(_snapshot_from_entries(_entries_from_samples(people, samples), revision=0))
 
     def snapshot(self) -> FaceLibrarySnapshot:
-        """返回当前不可变快照，供一次识别任务持有。"""
-
+        """取得只读矩阵及其版本，整个识别任务持有同一个快照。"""
         with self._lock:
             return self._snapshot
 
     def rebuild(self, repository: FaceRepository) -> None:
-        """从仓库全部样本重建矩阵，并一次性替换旧快照。"""
+        """一致读取后构建新矩阵，并以复制替换方式发布。"""
+        self.publish(self.from_repository(repository).snapshot())
 
-        person_rows = sorted(repository.list_people(), key=lambda person: person.id)
-        entries = []
-        for person in person_rows:
-            samples = repository.list_samples(person.id)
-            if not samples:
-                continue
-            normalized = [normalize_embedding(sample.embedding) for sample in samples]
-            prototype = normalize_embedding(np.mean(normalized, axis=0))
-            entries.append((person.id, person.display_name, prototype))
-        # 先在锁外完成数据库读取和矩阵计算，只在替换引用时短暂持锁。
+    def publish(self, replacement: FaceLibrarySnapshot) -> None:
+        """发布已构建矩阵并增加版本，不修改任何旧快照。"""
         with self._lock:
-            self._snapshot = _snapshot_from_entries(
-                entries, revision=self._snapshot.revision + 1
+            self._snapshot = FaceLibrarySnapshot(
+                replacement.person_ids,
+                replacement.display_names,
+                replacement.prototype_matrix,
+                self._snapshot.revision + 1,
             )
 
     def refresh_person(self, repository: FaceRepository, person_id: str) -> None:
-        """只重新计算一个身份的原型，并复制替换包含它的新矩阵。"""
-
-        person = repository.get_person(person_id)
-        samples = [] if person is None else repository.list_samples(person_id)
-        replacement = None
-        if person is not None and samples:
-            normalized = [normalize_embedding(sample.embedding) for sample in samples]
-            replacement = (person.id, person.display_name, normalize_embedding(np.mean(normalized, axis=0)))
-
+        """一次读取后只重算指定人员行，避免组合不同提交时刻的数据。"""
+        people_rows, sample_rows, _, _ = repository.read_library_rows()
+        people = [repository._person_from_row(row) for row in people_rows]
+        samples = [repository._sample_from_row(row) for row in sample_rows]
+        replacement = _entries_from_samples(
+            [person for person in people if person.id == person_id],
+            [sample for sample in samples if sample.person_id == person_id],
+        )
         with self._lock:
-            # 复制未受影响的行并重建矩阵，旧识别任务持有的快照因此不会被原地修改。
             entries = [
-                (current_id, current_name, self._snapshot.prototype_matrix[index].copy())
-                for index, (current_id, current_name) in enumerate(
-                    zip(self._snapshot.person_ids, self._snapshot.display_names, strict=True)
+                (pid, name, self._snapshot.prototype_matrix[index].copy())
+                for index, (pid, name) in enumerate(
+                    zip(self._snapshot.person_ids, self._snapshot.display_names)
                 )
-                if current_id != person_id
+                if pid != person_id
             ]
-            if replacement is not None:
-                entries.append(replacement)
-            entries.sort(key=lambda entry: entry[0])
-            self._snapshot = _snapshot_from_entries(
-                entries, revision=self._snapshot.revision + 1
-            )
+            entries.extend(replacement)
+            self._snapshot = _snapshot_from_entries(entries, revision=self._snapshot.revision + 1)
 
     def clear(self) -> None:
-        """清空内存标准库并递增版本号。"""
-
+        """检查失败时发布空库，不修改已交给任务的旧快照。"""
         with self._lock:
-            self._snapshot = _snapshot_from_entries(
-                (), revision=self._snapshot.revision + 1
-            )
+            self._snapshot = _snapshot_from_entries((), revision=self._snapshot.revision + 1)
+
+
+def _entries_from_samples(people, samples):
+    """按人员分组全部样本，拒绝无样本身份和无效平均向量。"""
+    grouped = {}
+    for sample in samples:
+        grouped.setdefault(sample.person_id, []).append(normalize_embedding(sample.embedding))
+    entries = []
+    for person in sorted(people, key=lambda item: item.id):
+        if not grouped.get(person.id):
+            raise ValueError(f"人员没有有效样本：{person.display_name}")
+        prototype = normalize_embedding(np.mean(grouped[person.id], axis=0))
+        entries.append((person.id, person.display_name, prototype))
+    return entries
 
 
 def _snapshot_from_entries(

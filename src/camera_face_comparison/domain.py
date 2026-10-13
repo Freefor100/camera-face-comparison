@@ -35,6 +35,16 @@ class FaceSample:
 
 
 @dataclass(frozen=True)
+class SampleMetadata:
+    """供展示和删除使用的样本元信息，不携带向量或质量记录。"""
+
+    id: str
+    person_id: str
+    image_path: str
+    source_type: str
+
+
+@dataclass(frozen=True)
 class RecognitionResult:
     """一次识别尝试的、可直接交给界面展示的结果。"""
 
@@ -55,3 +65,5 @@ class RecognitionResult:
     valid_frame_count: int = 1
     selected_frame_index: int | None = None
     selected_method: str | None = None
+    log_warning: str | None = None
+    storage_error_kind: str | None = None

@@ -731,7 +731,7 @@ class MainWindow(QMainWindow):
         """刷新人员及样本数量，不触发完整性检查。"""
         people = self._repository.list_people()
         samples_by_person: dict[str, list[FaceSample]] = {person.id: [] for person in people}
-        for sample in self._repository.list_samples():
+        for sample in self._repository.list_sample_metadata():
             samples_by_person.setdefault(sample.person_id, []).append(sample)
         self._library_page.set_people(
             people,
