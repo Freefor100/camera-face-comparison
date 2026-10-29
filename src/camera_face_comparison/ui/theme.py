@@ -72,17 +72,20 @@ QComboBox, QLineEdit {
     border-radius: 10px;
     color: #74809a;
 }
-#resultTitle, #detailTitle { color: #eef2ff; font-size: 18px; font-weight: 700; }
+#resultTitle { color: #eef2ff; font-size: 22px; font-weight: 700; }
+#detailTitle { color: #eef2ff; font-size: 18px; font-weight: 700; }
 #resultTitle[state="matched"] { color: #58d6a5; }
 #resultTitle[state="unknown"] { color: #ff6b7a; }
 #resultTitle[state="invalid"] { color: #ffbd72; }
 #resultTitle[state="error"] { color: #ff6b7a; }
 #resultTitle[state="working"] { color: #a9b7ff; }
-#resultName { color: #f8faff; font-size: 20px; font-weight: 650; }
+#resultName { color: #f8faff; font-size: 24px; font-weight: 650; }
 #statusText, #metricText { color: #a8b3c9; }
+#resultCard #statusText, #resultCard #qualityText { font-size: 16px; }
+#resultCard #cardMeta { font-size: 15px; }
 #metricItem { background: transparent; }
-#metricCaption { color: #74829f; font-size: 11px; font-weight: 600; }
-#metricValue { color: #e7ecf8; font-size: 14px; font-weight: 600; }
+#metricCaption { color: #74829f; font-size: 14px; font-weight: 600; }
+#metricValue { color: #e7ecf8; font-size: 18px; font-weight: 600; }
 #metricValue[role="fixed"] { color: #a9b7ff; }
 #qualityText { color: #ffcf8a; }
 #integrityText { color: #77e1b5; }
